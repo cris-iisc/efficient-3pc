@@ -79,6 +79,10 @@ int garbler(char *ip){
     network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
     recv_bytes+=2+INPUT_4M/2;
 
+    #ifdef DEBUG
+      cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
+
     time_beg = clock();//computatipn
   if(buffer[1]=='A'){
     cout<<"I\'m Alice\n";
@@ -150,6 +154,10 @@ int garbler(char *ip){
       time_end = clock();
       comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
 
+      #ifdef DEBUG
+        cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+      #endif
+
       send(soc_id[1-id],buffer,1,0);
       time_beg = clock();
     send(soc_id[1-id],buffer,MAX_PAYLOAD_SIZE,0);
@@ -158,6 +166,11 @@ int garbler(char *ip){
     recv(soc_id[1-id],buffer,MAX_PAYLOAD_SIZE,0);
       time_end = clock();
       network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+      #ifdef DEBUG
+        cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+      #endif
+
       send_bytes+=1+sizeof(block)+INPUT_4M/8;
       recv_bytes+=1+sizeof(int);
     if(buffer[0]==EVENT_TTP_INIT){
@@ -186,6 +199,11 @@ int garbler(char *ip){
         time_end = clock();
         network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
         send_bytes+=1+sizeof(int);
+
+        #ifdef DEBUG
+          cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+        #endif
+
       memcpy(&ttp_id,buffer+1,sizeof(int));
       // printf("Commitment mis match detected by Alice\n TTP is %d\n",ttp_id);
       ttp_mode.unlock();
@@ -210,6 +228,10 @@ int garbler(char *ip){
       network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
       send_bytes+=1;
       recv_bytes += 1+sizeof(block)+INPUT_4M/8;
+      #ifdef DEBUG
+        cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+      #endif
+
       time_beg = clock();
 
     memcpy(&seed,buffer+1,sizeof(block));
@@ -244,6 +266,11 @@ int garbler(char *ip){
     comp_time_mtx.lock();
       network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
       send_bytes+=sizeof(bool)*INPUT_4M/2+1;
+
+      #ifdef DEBUG
+        cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+      #endif
+
     comp_time_mtx.unlock();
   //Sent b values to the evaluator----------------------------------------------
 
@@ -305,6 +332,10 @@ int garbler(char *ip){
     time_end = clock();
     comp_time_mtx.lock();
     comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+    #ifdef DEBUG
+      cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
+
     comp_time_mtx.unlock();
 
   #ifdef DEBUG
@@ -326,6 +357,10 @@ int garbler(char *ip){
     comp_time_mtx.lock();
       network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
       broadcast_bytes += gc.n*2*SHA256_DIGEST_LENGTH;
+      #ifdef DEBUG
+        cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+      #endif
+
     comp_time_mtx.unlock();
 
   #ifdef DEBUG
@@ -339,9 +374,19 @@ int garbler(char *ip){
   #endif
   memcpy(buffer,hash1,SHA256_DIGEST_LENGTH);
     //Dummy Sent 1 byte
-    send(soc_id[2],buffer,1,0);
+    broadcast(soc_id[1-id],soc_id[2],buffer,1,0);
     time_beg = clock();
-  send(soc_id[2],buffer,SHA256_DIGEST_LENGTH,0);
+  broadcast(soc_id[1-id],soc_id[2],buffer,SHA256_DIGEST_LENGTH,0);
+
+  time_end = clock();
+  comp_time_mtx.lock();
+  network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+  send_bytes+=sizeof(bool)*gc.m+SHA256_DIGEST_LENGTH;
+  comp_time_mtx.unlock();
+
+  #ifdef DEBUG
+    cout<<"(broadcast)Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+  #endif
 
   #ifdef DEBUG
     printf("Sent hash!\n");
@@ -350,11 +395,17 @@ int garbler(char *ip){
 
    //send output_perms
   memcpy(buffer,gc.output_perms,sizeof(bool)*gc.m);
+    time_beg = clock();
   send(soc_id[2],buffer,sizeof(bool)*gc.m,0);
     time_end = clock();
     comp_time_mtx.lock();
     network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
     send_bytes+=sizeof(bool)*gc.m+SHA256_DIGEST_LENGTH;
+
+    #ifdef DEBUG
+      cout<<"(broadcast)Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
+
     comp_time_mtx.unlock();
 
   //Sending GC===================================================================
@@ -365,18 +416,23 @@ int garbler(char *ip){
   #ifdef DEBUG
     printf("Sending GC...\n");
   #endif
-    broadcast(soc_id[1-id],soc_id[2],buffer,1,0);
+    send(soc_id[2],buffer,1,0);
     time_beg = clock();
   for(j=0;j<no_of_rounds;++j){
     memcpy(buffer,gc.table+id*size_of_table+j*blocks_in_one_round,blocks_in_one_round*sizeof(block));
-    broadcast(soc_id[1-id],soc_id[2],buffer,blocks_in_one_round*sizeof(block),0);
+    send(soc_id[2],buffer,blocks_in_one_round*sizeof(block),0);
   }
   memcpy(buffer,gc.table+id*size_of_table+j*blocks_in_one_round,blocks_in_last_round*sizeof(block));
-  broadcast(soc_id[1-id],soc_id[2],buffer,blocks_in_last_round*sizeof(block),0);
+  send(soc_id[2],buffer,blocks_in_last_round*sizeof(block),0);
     time_end = clock();
     comp_time_mtx.lock();
     network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
     broadcast_bytes+=size_of_table*sizeof(block);
+
+    #ifdef DEBUG
+      cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
+
     comp_time_mtx.unlock();
 
   //Sent GC-----------------------------------------------------------------------
@@ -392,6 +448,10 @@ int garbler(char *ip){
       time_end = clock();
       network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
       send_bytes+=sizeof(int)+1;
+
+      #ifdef DEBUG
+        cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+      #endif
 
     ttp_mode.unlock();
     eval_complete.lock();//wait till evaluation completes.
@@ -413,6 +473,10 @@ int garbler(char *ip){
     network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
     send_bytes+=sizeof(bool) *INPUT_4M;
 
+    #ifdef DEBUG
+      cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
+
   //Garblers labels for decommit
     //Dummy sent for timing
     send(soc_id[2], buffer, 1, 0);
@@ -424,6 +488,10 @@ int garbler(char *ip){
     network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
     send_bytes += sizeof(block) * gc.n;
 
+    #ifdef DEBUG
+      cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
+
   //receving Y from evaluator.===============================================
     //Dummy sent for timing
     recv(soc_id[2], buffer, 1, 0);
@@ -432,6 +500,10 @@ int garbler(char *ip){
     time_end = clock();
     network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
     recv_bytes += sizeof(block) * gc.m;
+
+    #ifdef DEBUG
+      cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
 
   if(buffer[0]==EVENT_TTP_INIT){
     memcpy(&ttp_id,buffer+1,sizeof(int));
@@ -468,6 +540,11 @@ int garbler(char *ip){
     time_end = clock();
     network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
     send_bytes += sizeof(block) * 2 * gc.m;
+
+    #ifdef DEBUG
+      cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
+
   printf("Computation time : %f\nNetwork time : %f\n",comp_time,network_time);
   printf("Send %f bytes\tReceived : %f bytes\tBroadcasted : %f bytes\n",send_bytes,recv_bytes,broadcast_bytes);
   printf("Send %f KB\tReceived : %f KB\tBroadcasted : %f KB\n",send_bytes/1024,recv_bytes/1024,broadcast_bytes/1024);
@@ -499,6 +576,9 @@ int other_garbler_handler(int s_fd){
     network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
     recv_bytes += gc.n*2*SHA256_DIGEST_LENGTH;
     comp_time_mtx.unlock();
+    #ifdef DEBUG
+      cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
 
   //cheching I/P commitment broadcasted is equal
   commit_check_mtx.lock();
@@ -508,44 +588,54 @@ int other_garbler_handler(int s_fd){
   if(memcmp(commit_msg_other,commit_ip[id],gc.n*2*SHA256_DIGEST_LENGTH) != 0){
     cout<<"commitment for G1&G2 are not equal\n setting conflict flag...\n";
     conflict_flag = 1;
-    ttp_id = 3;
+    ttp_id = 2;
   }
   // cout<<"####OGT: commitments are equal, \n";
     time_end = clock();
     comp_time_mtx.lock();
     comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+    #ifdef DEBUG
+      cout<<"(broadcast handler)Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
+
     comp_time_mtx.unlock();
   commit_check_mtx.unlock();
 
 
   //receiving the garble circuit================================================
   int size_of_table = (gc.q - gc.nxors);
-  no_of_rounds = (size_of_table/blocks_in_one_round);
-  blocks_in_last_round = size_of_table %blocks_in_one_round;
+  // no_of_rounds = (size_of_table/blocks_in_one_round);
+  // blocks_in_last_round = size_of_table %blocks_in_one_round;
     //dummy send (for timing calculations)
     recv(s_fd,buffer,1,0);
     time_beg = clock();
-  for(j=0;j<no_of_rounds;++j){
-    recv(s_fd,buffer,blocks_in_one_round*sizeof(block),0);
-    memcpy(gc.table+(1-id)*size_of_table+j*blocks_in_one_round,buffer,blocks_in_one_round*sizeof(block));
-  }
-  recv(s_fd,buffer,blocks_in_last_round*sizeof(block),0);
-  memcpy(gc.table+(1-id)*size_of_table+j*blocks_in_one_round,buffer,blocks_in_last_round*sizeof(block));
+  // for(j=0;j<no_of_rounds;++j){
+  //   recv(s_fd,buffer,blocks_in_one_round*sizeof(block),0);
+  //   memcpy(gc.table+(1-id)*size_of_table+j*blocks_in_one_round,buffer,blocks_in_one_round*sizeof(block));
+  // }
+  // recv(s_fd,buffer,blocks_in_last_round*sizeof(block),0);
+  // memcpy(gc.table+(1-id)*size_of_table+j*blocks_in_one_round,buffer,blocks_in_last_round*sizeof(block));
+    recv(s_fd,buffer,SHA256_DIGEST_LENGTH,0);
     time_end = clock();
     comp_time_mtx.lock();
       network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
       recv_bytes += size_of_table*sizeof(block);
+      #ifdef DEBUG
+        cout<<"(broadcast handler)Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+      #endif
+
     comp_time_mtx.unlock();
 
 
     hash_check_mtx.lock();
           time_beg = clock();
         // cout<<"Comparing hashes\n";
-        u_char hash_calc[SHA256_DIGEST_LENGTH]; //calculating hash of received GC
-        garble_hash(&gc, hash_calc);
+        // u_char hash_calc[SHA256_DIGEST_LENGTH]; //calculating hash of received GC
+        // garble_hash(&gc, hash_calc);
         // printf("%s\n", hash_calc);
 
-        if(memcmp(hash_calc,gc_hash[id],SHA256_DIGEST_LENGTH)!=0){
+        if(memcmp(buffer,gc_hash[id],SHA256_DIGEST_LENGTH)!=0){
           cout<<"in OGT:hash is not equal to the GC\n";
           conflict_flag = 1;
           ttp_id = 2;
@@ -556,6 +646,11 @@ int other_garbler_handler(int s_fd){
           time_end = clock();
           comp_time_mtx.lock();
           comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+          #ifdef DEBUG
+            cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+          #endif
+
           comp_time_mtx.unlock();
 
      hash_check_mtx.unlock();
@@ -614,6 +709,11 @@ int garble_handler(int id){
     time_end = clock();
     comp_time_mtx.lock();
     comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+    #ifdef DEBUG
+      cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
+
     comp_time_mtx.unlock();
 
   //testing changing inputs Evaluator is corrupt
@@ -676,6 +776,11 @@ int garble_handler(int id){
       time_end = clock();
       comp_time_mtx.lock();
       comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+      #ifdef DEBUG
+        cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+      #endif
+
       comp_time_mtx.unlock();
 
     b_check_mtx.unlock();
@@ -721,6 +826,11 @@ int garble_handler(int id){
       time_end = clock();
       comp_time_mtx.lock();
       comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+      #ifdef DEBUG
+        cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+      #endif
+
       comp_time_mtx.unlock();
     commit_check_mtx.unlock();
   }
@@ -801,11 +911,16 @@ int garble_handler(int id){
         ttp_id = 0;
       }
       else{
-        // cout<<"Hashes are equal!!!\n";
+        cout<<"Hashes are equal!!!\n";
       }
         time_end = clock();
         comp_time_mtx.lock();
         comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+        #ifdef DEBUG
+          cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+        #endif
+
         comp_time_mtx.unlock();
    hash_check_mtx.unlock();
   }
@@ -840,6 +955,11 @@ int garble_handler(int id){
     time_end = clock();
     comp_time_mtx.lock();
     comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+    #ifdef DEBUG
+      cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
+
     comp_time_mtx.unlock();
 
   #ifdef DEBUG
@@ -868,6 +988,11 @@ int garble_handler(int id){
     time_end = clock();
     comp_time_mtx.lock();
     comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+    #ifdef DEBUG
+      cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+    #endif
+
     comp_time_mtx.unlock();
 
   #ifdef DEBUG
@@ -891,6 +1016,11 @@ int garble_handler(int id){
        time_end = clock();
        comp_time_mtx.lock();
        comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+       #ifdef DEBUG
+         cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+       #endif
+
        comp_time_mtx.unlock();
     decom_check_mtx.unlock();
   }else{
@@ -924,6 +1054,11 @@ int garble_handler(int id){
       time_end = clock();
       comp_time_mtx.lock();
       comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+      #ifdef DEBUG
+        cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+      #endif
+
       comp_time_mtx.unlock();
 
     eval_ready_mtx.unlock();
@@ -972,6 +1107,11 @@ int garble_handler(int id){
       time_end = clock();
         comp_time_mtx.lock();
         comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+        #ifdef DEBUG
+          cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+        #endif
+
         comp_time_mtx.unlock();
     printf("\nEvaluated output successfully\n");
     printf("Computation time : %f\nNetwork time : %f\n",comp_time,network_time);
