@@ -35,6 +35,7 @@ mutex eval_ready_mtx;
 mutex eval_complete;
 mutex b_check_mtx;
 mutex ttp_mode;
+mutex ttp_mode_other_handler;
 mutex comp_time_mtx;
 
 //Global variables used by both threads
@@ -62,6 +63,7 @@ int garbler(char *ip){
   socklen_t addr_size = sizeof(client_addr);
   clock_t time_beg, time_end;
 
+  u_char ip_msg_hash[SHA256_DIGEST_LENGTH];
   u_char buffer[MAX_PAYLOAD_SIZE];
 
   int server_fd,i,j;
@@ -74,10 +76,10 @@ int garbler(char *ip){
     //dummy recv for exact network_time
     recv(soc_id[2],buffer,1,0);
     time_beg = clock();
-  recv(soc_id[2],buffer,MAX_PAYLOAD_SIZE,0);
+  recv(soc_id[2],buffer,2+INPUT_4M/2+2*SHA256_DIGEST_LENGTH,0);
     time_end = clock();
     network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
-    recv_bytes+=2+INPUT_4M/2;
+    recv_bytes+=2+INPUT_4M/2+2*SHA256_DIGEST_LENGTH;
 
     #ifdef DEBUG
       cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
@@ -114,6 +116,8 @@ int garbler(char *ip){
     printf("Input commitment varification failed\nsetting TTP mode flags\n");
     conflict_flag = 1;
     ttp_id = 1-id;//other garbler
+    memcpy(ip_msg_hash,buffer+2+( sizeof(bool)*INPUT_4M/4 ),SHA256_DIGEST_LENGTH);
+    commit_ip[id] = ip_msg_hash;
   }
   else{
     // printf("Input commitment varified successfully");
@@ -136,8 +140,10 @@ int garbler(char *ip){
     if(conflict_flag == 1){//TTP establishing
       buffer[0] = EVENT_TTP_INIT;
       memcpy(buffer+1,&ttp_id,sizeof(int));
-      broadcast(soc_id[1-id], soc_id[2], buffer, MAX_PAYLOAD_SIZE, 0);
-      broadcast_bytes+=(1+sizeof(int));
+        send(soc_id[2],buffer,1,0);
+        time_beg = clock();
+      broadcast(soc_id[1-id], soc_id[2], buffer, INPUT_4M/2 +1, 0);
+      broadcast_bytes+=INPUT_4M/2 +1;
       ttp_mode.unlock();//resume the ttp_execution thread active.
       eval_complete.lock();//wait till evaluation completes.
       eval_complete.unlock();
@@ -160,12 +166,18 @@ int garbler(char *ip){
 
       send(soc_id[1-id],buffer,1,0);
       time_beg = clock();
-    send(soc_id[1-id],buffer,MAX_PAYLOAD_SIZE,0);
-
-    //this recv is for checking weather Bob had an issue
-    recv(soc_id[1-id],buffer,MAX_PAYLOAD_SIZE,0);
+    send(soc_id[1-id],buffer, INPUT_4M/2 +1,0);
       time_end = clock();
       network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+      send_bytes+=INPUT_4M/2 +1;
+
+    //this recv is for checking weather Bob had an issue
+    recv(soc_id[1-id],buffer,1,0);
+      time_beg = clock();
+    recv(soc_id[1-id],buffer,INPUT_4M/2 +1,0);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+      recv_bytes+=INPUT_4M/2 +1;
 
       #ifdef DEBUG
         cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
@@ -174,7 +186,7 @@ int garbler(char *ip){
       send_bytes+=1+sizeof(block)+INPUT_4M/8;
       recv_bytes+=1+sizeof(int);
     if(buffer[0]==EVENT_TTP_INIT){
-      send(soc_id[2],buffer,MAX_PAYLOAD_SIZE,0);//informing evaluators other thread
+      // send(soc_id[2],buffer,INPUT_4M/2 +1,0);//informing evaluators other thread
       send_bytes+=1+sizeof(int);
       memcpy(&ttp_id,buffer+1,sizeof(int));
       printf("Commitment mis match detected by Bob\n TTP is %d\n",ttp_id);
@@ -192,20 +204,16 @@ int garbler(char *ip){
 
       recv(soc_id[1-id],buffer,1,0);
       time_beg = clock();
-    recv(soc_id[1-id],buffer,MAX_PAYLOAD_SIZE,0);
-
+    recv(soc_id[1-id],buffer, INPUT_4M/2 +1,0);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+      recv_bytes+=INPUT_4M/2 +1;
+      #ifdef DEBUG
+        cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
+      #endif
     if(buffer[0]==EVENT_TTP_INIT){//Alice detected mismatch
-      send(soc_id[2],buffer,MAX_PAYLOAD_SIZE,0);//informing evaluators other thread
-        time_end = clock();
-        network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
-        send_bytes+=1+sizeof(int);
-
-        #ifdef DEBUG
-          cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
-        #endif
-
       memcpy(&ttp_id,buffer+1,sizeof(int));
-      // printf("Commitment mis match detected by Alice\n TTP is %d\n",ttp_id);
+      printf("Commitment mis match detected by Alice\n TTP is %d\n",ttp_id);
       ttp_mode.unlock();
       eval_complete.lock();//wait till evaluation completes.
       eval_complete.unlock();
@@ -214,8 +222,13 @@ int garbler(char *ip){
       printf("Commitment mis match detected by Bob\n TTP is %d\n",ttp_id);
       buffer[0] = EVENT_TTP_INIT;
       memcpy(buffer+1,&ttp_id,sizeof(int));
-      broadcast(soc_id[1-id], soc_id[2], buffer, MAX_PAYLOAD_SIZE, 0);
-      broadcast_bytes += 1;
+        //Dummy broadcast to get them ready
+        broadcast(soc_id[1-id],soc_id[2],buffer,1,0);
+        time_beg = clock();
+      broadcast(soc_id[1-id], soc_id[2], buffer, INPUT_4M/2 +1, 0);
+        time_end = clock();
+        network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+        broadcast_bytes += INPUT_4M/2+1;
       ttp_mode.unlock();
       eval_complete.lock();//wait till evaluation completes.
       eval_complete.unlock();
@@ -223,11 +236,12 @@ int garbler(char *ip){
     }
 
     buffer[0]=EVENT_ACK_OK;
-    send(soc_id[1-id],buffer,MAX_PAYLOAD_SIZE,0);
+      send(soc_id[1-id],buffer,1,0);
+      time_beg = clock();
+    send(soc_id[1-id],buffer, INPUT_4M/2 +1,0);
       time_end = clock();
       network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
-      send_bytes+=1;
-      recv_bytes += 1+sizeof(block)+INPUT_4M/8;
+      send_bytes += INPUT_4M/2 +1;
       #ifdef DEBUG
         cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
       #endif
@@ -381,7 +395,7 @@ int garbler(char *ip){
   time_end = clock();
   comp_time_mtx.lock();
   network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
-  send_bytes+=sizeof(bool)*gc.m+SHA256_DIGEST_LENGTH;
+  broadcast_bytes+=sizeof(bool)*gc.m+SHA256_DIGEST_LENGTH;
   comp_time_mtx.unlock();
 
   #ifdef DEBUG
@@ -427,7 +441,7 @@ int garbler(char *ip){
     time_end = clock();
     comp_time_mtx.lock();
     network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
-    broadcast_bytes+=size_of_table*sizeof(block);
+    send_bytes+=size_of_table*sizeof(block);
 
     #ifdef DEBUG
       cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
@@ -620,7 +634,7 @@ int other_garbler_handler(int s_fd){
     time_end = clock();
     comp_time_mtx.lock();
       network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
-      recv_bytes += size_of_table*sizeof(block);
+      recv_bytes += SHA256_DIGEST_LENGTH;
       #ifdef DEBUG
         cout<<"(broadcast handler)Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
       #endif
@@ -685,6 +699,7 @@ int garble_handler(int id){
     eval_complete.lock();
     b_check_mtx.lock();
     decom_check_mtx.lock();
+    ttp_mode_other_handler.lock();
   }
   else if(id == 1){
     #ifdef DEBUG
@@ -721,11 +736,11 @@ int garble_handler(int id){
     //dummy recv for exact network_time
     send(soc_id[id],buffer,1,0);
     time_beg = clock();
-  send(soc_id[id],buffer,MAX_PAYLOAD_SIZE,0);
+  send(soc_id[id],buffer,2+INPUT_4M/2+2*SHA256_DIGEST_LENGTH,0);
     time_end = clock();
     comp_time_mtx.lock();
     network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
-    send_bytes += 2+INPUT_4M/2;
+    send_bytes += 2+INPUT_4M/2+2*SHA256_DIGEST_LENGTH;
     comp_time_mtx.unlock();
 
   //Sending initialization and inputs of evaluator done!!=======================
@@ -742,11 +757,17 @@ int garble_handler(int id){
   //check if both Alice and Bob send mismatch
   if(buffer[0]==EVENT_TTP_INIT){
     memcpy(&ttp_id,buffer+1,sizeof(int));
+    printf("TTP init in %d thread\n",id);
     ttp_mode.unlock();
     eval_complete.lock();//wait till evaluation completes.
     eval_complete.unlock();
-    return 0;
+    exit(0);
+    // return 0;
+  }else{
+    // ttp_mode_other_handler.unlock();
   }
+  // ttp_mode_other_handler.lock();
+
 
   //Receiving b values==========================================================
   if(id==0)
@@ -754,7 +775,7 @@ int garble_handler(int id){
   else
     memcpy(b+INPUT_4M/2,buffer+1,sizeof(bool)*INPUT_4M/2);
   #ifdef DEBUG
-    printf("Received b values\n");
+    printf("Received b values from %d\n",id);
   #endif
 
   //Comparing b values==========================================================
@@ -1128,24 +1149,37 @@ void ttp_execution(){
 	ttp_mode.lock();//wait till this lock is released
   u_char buffer[MAX_PAYLOAD_SIZE];
   u_char buff[MAX_PAYLOAD_SIZE];
-  //bool inputs[MAX_PAYLOAD_SIZE];
+  u_char buffer2[MAX_PAYLOAD_SIZE];
+
   int flag=0;
 	switch(ttp_id){
 		case ALICE_TTP:
 			{
 			   printf("Alice is the TTP :)\n");
+         //  exit(0);
 			   //behave accordingly id=0,id=1,id=2
          if(id==0){
+              //dummy recv for timing calc
+              recv(soc_id[2], buffer, 1,0);
+              recv(soc_id[1], buffer, 1,0);
+              time_beg = clock();
+            thread r2(recv, soc_id[1], buffer2, INPUT_4M+SHA256_DIGEST_LENGTH, 0);
             recv(soc_id[2], buffer, sizeof(bool)*INPUT_4M/4,0); //get o32
+            r2.join();
+              time_end = clock();
+              network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+              recv_bytes += INPUT_4M+SHA256_DIGEST_LENGTH;
+
+              //comp time
+              time_beg = clock();
             //copy Alice's inputs. Already done
-            if(verify_commitInputs(buff,buffer, INPUT_4M/4, NULL, COMMIT_SCHEME_SHA256)==false){
-                printf("Cle sent wrong value\n");
-                flag=1;
+            if(verify_commitInputs(buffer2+INPUT_4M,buffer, INPUT_4M/4, NULL, COMMIT_SCHEME_SHA256)==false){
+                printf("Cleve sent wrong value\n");
+                memcpy(inputs+3*INPUT_4M/4,buffer2, INPUT_4M/4);
             }
             else{
                 memcpy(inputs+3*INPUT_4M/4,buffer, INPUT_4M/4);
             }
-            recv(soc_id[1], buffer, MAX_PAYLOAD_SIZE, 0); //receive from Bob
             memcpy(inputs + INPUT_4M/4, buffer + INPUT_4M/4, INPUT_4M/4);
 
             if(flag==1){
@@ -1154,29 +1188,56 @@ void ttp_execution(){
                     for (int i = 0; i < INPUT_4M/4; ++i){
                        inputs[3* INPUT_4M/4 + i]= rand()%2; //get default input for P3
                     }
-                }
-                else{
+                }else{
                     memcpy(inputs+3*INPUT_4M/4,buffer, INPUT_4M/4);
                 }
             }
 
-            //compute f(x,y,z)
-            broadcast(soc_id[1], soc_id[2], buffer, 256, 0);
+            //if the scheme is SHA256
+            SHA256((unsigned char *)(&inputs), INPUT_4M, (unsigned char *)buffer);
 
+              time_end = clock();
+              comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+            broadcast(soc_id[1], soc_id[2], buffer, SHA256_DIGEST_LENGTH, 0);
+            broadcast_bytes += SHA256_DIGEST_LENGTH;
          }
          else if(id==1){
-            sleep(2);//WHY?
-            memcpy(buffer, inputs + 3 * INPUT_4M/4, INPUT_4M);
-            send(soc_id[0], buffer, INPUT_4M/4, 0);
-            recv(soc_id[0], buffer, 256, 0);
-            printf("TTp sent Y\n");
+            memcpy(buffer, inputs , INPUT_4M);
+            memcpy(buffer+INPUT_4M, commit_ip[1], SHA256_DIGEST_LENGTH);
+              send(soc_id[0],buffer,1,0);
+              time_beg = clock();
+            send(soc_id[0], buffer, INPUT_4M+SHA256_DIGEST_LENGTH, 0);
+              time_end = clock();
+              network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+              send_bytes += INPUT_4M+SHA256_DIGEST_LENGTH;
+
+              recv(soc_id[0], buffer, 1,0);
+              time_beg = clock();
+            recv(soc_id[0], buffer, SHA256_DIGEST_LENGTH, 0);
+              time_end = clock();
+              network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+              recv_bytes += INPUT_4M+SHA256_DIGEST_LENGTH;
+
+            printf("Received o/p from Alice \n");
          }
          else{
             memcpy(buffer, inputs + 3* INPUT_4M/4, INPUT_4M);
+              send(soc_id[0],buffer,1,0);
+              time_beg = clock();
             send(soc_id[0], buffer, INPUT_4M/4, 0);
-            recv(soc_id[0], buffer, 256, 0);
+              time_end = clock();
+              network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+              send_bytes += INPUT_4M/4;
 
-            printf("TTp sent Y\n");
+              recv(soc_id[0], buffer, 1,0);
+              time_beg = clock();
+            recv(soc_id[0], buffer, SHA256_DIGEST_LENGTH, 0);
+              time_end = clock();
+              network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+              recv_bytes += INPUT_4M+SHA256_DIGEST_LENGTH;
+
+            printf("Received o/p from Alice \n");
          }
 			}
 			break;
@@ -1184,6 +1245,7 @@ void ttp_execution(){
 		case BOB_TTP:
 			{
 			   printf("Bob is the TTP :)\n");
+         exit(0);
 			   //behave accordingly id=0,id=1,id=2
          if(id==1)
          {
@@ -1249,6 +1311,7 @@ void ttp_execution(){
 		case CLEVE_TTP:
 			{
 			   printf("Cleve is the TTP :)\n");
+         exit(0);
 			   //behave accordingly id=0,id=1,id=2
 
          if(id==2)
@@ -1291,6 +1354,11 @@ void ttp_execution(){
 	ttp_mode.unlock();
 
   //After completing evaluation
+
+    printf("Computation time : %f\nNetwork time : %f\n",comp_time,network_time);
+    printf("Send %f bytes\tReceived : %f bytes\tBroadcasted : %f bytes\n",send_bytes,recv_bytes,broadcast_bytes);
+    printf("Send %f KB\tReceived : %f KB\tBroadcasted : %f KB\n",send_bytes/1024,recv_bytes/1024,broadcast_bytes/1024);
+
   eval_complete.unlock();
 }
 //P3 server open for connecting P1 & P2

@@ -8,8 +8,9 @@ typedef struct
 
 //TODO -with publick key
 ssize_t broadcast(int sockfd1,int sockfd2, const void *buf, size_t len ,int flags){
+	thread s2 (send,sockfd2,buf,len,flags);
 	send(sockfd1,buf,len,flags);
-	send(sockfd2,buf,len,flags);
+	s2.join();
 }
 
 void printHex(u_char *msg_ptr , int msg_size){
