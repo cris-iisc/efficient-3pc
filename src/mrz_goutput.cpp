@@ -10,7 +10,7 @@ int sha256_in_one_round = blocks_in_one_round/2;
 #define EVENT_INIT_CLIENT 55
 #define EVENT_TTP_INIT 56
 
-#define GC_FILE "circuits/sha_256.txt"
+#define GC_FILE "circuits/md5.txt"
 // #define DEBUG
 
 //time calculations
@@ -427,6 +427,11 @@ int garbler(char *ip){
   no_of_rounds = (size_of_table/blocks_in_one_round);
   blocks_in_last_round = size_of_table %blocks_in_one_round;
 
+  g_other.join();//other thread will varify the broadcast
+
+  // //introducing error for Bob
+  // memcpy(gc.table+size_of_table+1,buffer,100);
+
   #ifdef DEBUG
     printf("Sending GC...\n");
   #endif
@@ -451,7 +456,6 @@ int garbler(char *ip){
 
   //Sent GC-----------------------------------------------------------------------
 
-  g_other.join();//other thread will varify the broadcast
   if(conflict_flag==1){
     buffer[0] = EVENT_TTP_INIT;
     memcpy(buffer+1,&ttp_id,sizeof(int));
@@ -520,6 +524,7 @@ int garbler(char *ip){
     #endif
 
   if(buffer[0]==EVENT_TTP_INIT){
+    printf("Evaluator initiated TTP mode\n");
     memcpy(&ttp_id,buffer+1,sizeof(int));
     ttp_mode.unlock();
     eval_complete.lock();//wait till evaluation completes.
@@ -547,13 +552,13 @@ int garbler(char *ip){
     comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
 
   printf("\nEvaluated output successfully\n");
-    send(soc_id[2],buffer,1,0);
-    time_beg = clock();
-  memcpy(buffer, outputMap, sizeof(block)*2*gc.m);
-  send(soc_id[2], buffer, sizeof(block) * 2 * gc.m,0);
-    time_end = clock();
-    network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
-    send_bytes += sizeof(block) * 2 * gc.m;
+  //   send(soc_id[2],buffer,1,0);
+  //   time_beg = clock();
+  // memcpy(buffer, outputMap, sizeof(block)*2*gc.m);
+  // send(soc_id[2], buffer, sizeof(block) * 2 * gc.m,0);
+  //   time_end = clock();
+  //   network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+  //   send_bytes += sizeof(block) * 2 * gc.m;
 
     #ifdef DEBUG
       cout<<"Total Network Time : "<< network_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
@@ -944,6 +949,8 @@ int garble_handler(int id){
 
         comp_time_mtx.unlock();
    hash_check_mtx.unlock();
+   ttp_mode_other_handler.unlock();
+
   }
   else{
     hash_check_mtx.unlock();
@@ -1032,6 +1039,7 @@ int garble_handler(int id){
          else
             ttp_id = 0; //P2 is corrupt
         conflict_flag = 1;
+        break;
        }
      }
        time_end = clock();
@@ -1044,22 +1052,34 @@ int garble_handler(int id){
 
        comp_time_mtx.unlock();
     decom_check_mtx.unlock();
+    ttp_mode_other_handler.lock();
   }else{
     decom_check_mtx.unlock();
+    ttp_mode_other_handler.lock();
   }
   #ifdef DEBUG
     printf("Decomitment varification done\n");
   #endif
   if(conflict_flag == 1){
+    ttp_mode_other_handler.unlock();
+    printf("Evaluator initiated TTP mode\n");
     buffer[0] = EVENT_TTP_INIT;
     memcpy(buffer+1,&ttp_id,sizeof(int));
+      send(soc_id[id],buffer, 1, 0);
+      time_beg = clock();
     send(soc_id[id], buffer, gc.m*sizeof(block), 0);
-    send_bytes += 1+ sizeof(int);
+      time_end = clock();
+      comp_time_mtx.lock();
+        network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+        send_bytes +=  gc.m*sizeof(block);
+      comp_time_mtx.unlock();
+
     ttp_mode.unlock();
     eval_complete.lock();//wait till evaluation completes.
     eval_complete.unlock();
     return 0;
   }
+  ttp_mode_other_handler.unlock();
   //evaluating  =========================================================
   #ifdef DEBUG
     printf("Evaluation started\n");
@@ -1109,25 +1129,25 @@ int garble_handler(int id){
     comp_time_mtx.unlock();
 
   //Receving the decoding information
-    recv(soc_id[id],buffer,1,0);
-    time_beg = clock();
-  recv(soc_id[id], buffer, gc.m*2*sizeof(block), 0);
-    time_end = clock();
-    comp_time_mtx.lock();
-      network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
-      recv_bytes += gc.m*2*sizeof(block);
-    comp_time_mtx.unlock();
+  //   recv(soc_id[id],buffer,1,0);
+  //   time_beg = clock();
+  // recv(soc_id[id], buffer, gc.m*2*sizeof(block), 0);
+  //   time_end = clock();
+  //   comp_time_mtx.lock();
+  //     network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+  //     recv_bytes += gc.m*2*sizeof(block);
+  //   comp_time_mtx.unlock();
 
   if(id==1){
-      time_beg = clock();//Computation_time
-    memcpy(outputMap,buffer, gc.m*2*sizeof(block));
-    assert(garble_map_outputs(outputMap, computedOutputMap, outputVals, gc.m) == GARBLE_OK);
-    // for(i=0;i<gc.m;i++){
-    //   cout<<outputVals[i]<<" ";
-    // }
-      time_end = clock();
-        comp_time_mtx.lock();
-        comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+    //   time_beg = clock();//Computation_time
+    // memcpy(outputMap,buffer, gc.m*2*sizeof(block));
+    // assert(garble_map_outputs(outputMap, computedOutputMap, outputVals, gc.m) == GARBLE_OK);
+    // // for(i=0;i<gc.m;i++){
+    // //   cout<<outputVals[i]<<" ";
+    // // }
+    //   time_end = clock();
+    //     comp_time_mtx.lock();
+    //     comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
 
         #ifdef DEBUG
           cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
@@ -1235,7 +1255,7 @@ void ttp_execution(){
             recv(soc_id[0], buffer, SHA256_DIGEST_LENGTH, 0);
               time_end = clock();
               network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
-              recv_bytes += INPUT_4M+SHA256_DIGEST_LENGTH;
+              recv_bytes += SHA256_DIGEST_LENGTH;
 
             printf("Received o/p from Alice \n");
          }
@@ -1244,107 +1264,179 @@ void ttp_execution(){
 
 		case BOB_TTP:
 			{
-			   printf("Bob is the TTP :)\n");
-         exit(0);
-			   //behave accordingly id=0,id=1,id=2
-         if(id==1)
-         {
-            recv(soc_id[2], buffer, sizeof(bool)*INPUT_4M/4,0); //get o32
-            //copy Bob'ss inputs.
-            if(verify_commitInputs(buff,buffer, INPUT_4M/4, NULL, COMMIT_SCHEME_SHA256)==false)
-            {
-                printf("Cle sent wrong value\n");
-                flag=1;
+        printf("Bob is the TTP :)\n");
+        //  exit(0);
+        //behave accordingly id=0,id=1,id=2
+        if(id==1){
+             //dummy recv for timing calc
+             recv(soc_id[2], buffer, 1,0);
+             recv(soc_id[0], buffer, 1,0);
+             time_beg = clock();
+           thread r2(recv, soc_id[0], buffer2, INPUT_4M+SHA256_DIGEST_LENGTH, 0);
+           recv(soc_id[2], buffer, sizeof(bool)*INPUT_4M/4,0); //get o32
+           r2.join();
+             time_end = clock();
+             network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+             recv_bytes += INPUT_4M+SHA256_DIGEST_LENGTH+INPUT_4M/4;
 
-            }
-            else
-            {
-                memcpy(inputs+2*INPUT_4M/4,buffer, INPUT_4M/4);
-            }
+             //comp time
+             time_beg = clock();
+           //copy Alice's inputs. Already done
+           if(verify_commitInputs(buffer2+INPUT_4M,buffer, INPUT_4M/4, NULL, COMMIT_SCHEME_SHA256)==false){
+               printf("Cleve sent wrong value\n");
+               memcpy(inputs+INPUT_4M/2,buffer2, INPUT_4M/4);
+           }
+           else{
+               memcpy(inputs+INPUT_4M/2,buffer, INPUT_4M/4);
+           }
+           memcpy(inputs + INPUT_4M/4, buffer + INPUT_4M/4, INPUT_4M/4);
 
+           if(flag==1){
+               if(verify_commitInputs(buff, buffer, INPUT_4M/4, NULL, COMMIT_SCHEME_SHA256)==false){
+                   printf("Bob is lying too\n");
+                   for (int i = 0; i < INPUT_4M/4; ++i){
+                      inputs[3* INPUT_4M/4 + i]= rand()%2; //get default input for P3
+                   }
+               }else{
+                   memcpy(inputs+3*INPUT_4M/4,buffer, INPUT_4M/4);
+               }
+           }
 
-            recv(soc_id[0], buffer, MAX_PAYLOAD_SIZE, 0); //receive from Bob
-            memcpy(inputs, buffer + INPUT_4M/4, INPUT_4M/4);
+           //if the scheme is SHA256
+           SHA256((unsigned char *)(&inputs), INPUT_4M, (unsigned char *)buffer);
 
-            if(flag==1)
-            {
-                if(verify_commitInputs(buff, buffer, INPUT_4M/4, NULL, COMMIT_SCHEME_SHA256)==false)
-                {
-                    printf("Alice is lying too\n");
-                    for (int i = 0; i < INPUT_4M/4; ++i)
-                    {
-                       inputs[2* INPUT_4M/4 + i]= rand()%2; //get default input for P3
-                    }
-                }
-                else
-                {
-                    memcpy(inputs+2*INPUT_4M/4,buffer, INPUT_4M/4);
-                }
-            }
+             time_end = clock();
+             comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
 
-            //compute f(x,y,z)
-            broadcast(soc_id[0], soc_id[2], buffer, 256, 0);
+           broadcast(soc_id[1], soc_id[2], buffer, SHA256_DIGEST_LENGTH, 0);
+           broadcast_bytes += SHA256_DIGEST_LENGTH;
+        }
+        else if(id==0){
+           memcpy(buffer, inputs , INPUT_4M);
+           memcpy(buffer+INPUT_4M, commit_ip[1], SHA256_DIGEST_LENGTH);
+             send(soc_id[0],buffer,1,0);
+             time_beg = clock();
+           send(soc_id[0], buffer, INPUT_4M+SHA256_DIGEST_LENGTH, 0);
+             time_end = clock();
+             network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+             send_bytes += INPUT_4M+SHA256_DIGEST_LENGTH;
 
-         }
-         else if(id==0)
-         {
-            sleep(2);
-            memcpy(buffer, inputs + 2 * INPUT_4M/4, INPUT_4M);
-            send(soc_id[1], buffer, INPUT_4M/4, 0);
-            recv(soc_id[1], buffer, 256, 0);
+             recv(soc_id[0], buffer, 1,0);
+             time_beg = clock();
+           recv(soc_id[0], buffer, SHA256_DIGEST_LENGTH, 0);
+             time_end = clock();
+             network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+             recv_bytes += INPUT_4M+SHA256_DIGEST_LENGTH;
 
-            printf("TTp sent Y\n");
-         }
-         else
-         {
-            memcpy(buffer, inputs + 2*INPUT_4M/4, INPUT_4M);
-            send(soc_id[1], buffer, INPUT_4M/4, 0);
-            recv(soc_id[1], buffer, 256, 0);
+           printf("Received o/p from Bob \n");
+        }
+        else{
+           memcpy(buffer, inputs + 3* INPUT_4M/4, INPUT_4M);
+             send(soc_id[0],buffer,1,0);
+             time_beg = clock();
+           send(soc_id[0], buffer, INPUT_4M/4, 0);
+             time_end = clock();
+             network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+             send_bytes += INPUT_4M/4;
 
-            printf("TTp sent Y\n");
-         }
+             recv(soc_id[0], buffer, 1,0);
+             time_beg = clock();
+           recv(soc_id[0], buffer, SHA256_DIGEST_LENGTH, 0);
+             time_end = clock();
+             network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+             recv_bytes += SHA256_DIGEST_LENGTH;
 
-
-			}
-			break;
+           printf("Received o/p from Bob \n");
+        }
+     }
+     break;
 
 		case CLEVE_TTP:
 			{
 			   printf("Cleve is the TTP :)\n");
          exit(0);
 			   //behave accordingly id=0,id=1,id=2
+         if(id==2){
+              //dummy recv for timing calc
+              recv(soc_id[2], buffer, 1,0);
+              recv(soc_id[1], buffer, 1,0);
+              time_beg = clock();
+            thread r2(recv, soc_id[1], buffer2, INPUT_4M+SHA256_DIGEST_LENGTH, 0);
+            recv(soc_id[2], buffer, sizeof(bool)*INPUT_4M/4,0); //get o32
+            r2.join();
+              time_end = clock();
+              network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+              recv_bytes += INPUT_4M+SHA256_DIGEST_LENGTH+INPUT_4M/4;
 
-         if(id==2)
-         {
-            recv(soc_id[0], buffer, INPUT_4M/4, 0);
-            memcpy(inputs, buffer, INPUT_4M/4);
+              //comp time
+              time_beg = clock();
+            //copy Alice's inputs. Already done
+            if(verify_commitInputs(buffer2+INPUT_4M,buffer, INPUT_4M/4, NULL, COMMIT_SCHEME_SHA256)==false){
+                printf("Cleve sent wrong value\n");
+                memcpy(inputs+3*INPUT_4M/4,buffer2, INPUT_4M/4);
+            }
+            else{
+                memcpy(inputs+3*INPUT_4M/4,buffer, INPUT_4M/4);
+            }
+            memcpy(inputs + INPUT_4M/4, buffer + INPUT_4M/4, INPUT_4M/4);
 
-            recv(soc_id[1], buffer, INPUT_4M/4, 0);
-            memcpy(inputs+INPUT_4M/4, buffer, INPUT_4M/4);
+            if(flag==1){
+                if(verify_commitInputs(buff, buffer, INPUT_4M/4, NULL, COMMIT_SCHEME_SHA256)==false){
+                    printf("Bob is lying too\n");
+                    for (int i = 0; i < INPUT_4M/4; ++i){
+                       inputs[3* INPUT_4M/4 + i]= rand()%2; //get default input for P3
+                    }
+                }else{
+                    memcpy(inputs+3*INPUT_4M/4,buffer, INPUT_4M/4);
+                }
+            }
 
-            //compute f(x,y,z)
-            broadcast(soc_id[0], soc_id[1], buffer, 256, 0);
+            //if the scheme is SHA256
+            SHA256((unsigned char *)(&inputs), INPUT_4M, (unsigned char *)buffer);
+
+              time_end = clock();
+              comp_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+
+            broadcast(soc_id[1], soc_id[2], buffer, SHA256_DIGEST_LENGTH, 0);
+            broadcast_bytes += SHA256_DIGEST_LENGTH;
          }
-         else if(id==0)
-         {
-            memcpy(buffer, inputs, INPUT_4M);
-            send(soc_id[2], buffer, INPUT_4M/4, 0);
+         else if(id==1){
+            memcpy(buffer, inputs , INPUT_4M);
+            memcpy(buffer+INPUT_4M, commit_ip[1], SHA256_DIGEST_LENGTH);
+              send(soc_id[0],buffer,1,0);
+              time_beg = clock();
+            send(soc_id[0], buffer, INPUT_4M+SHA256_DIGEST_LENGTH, 0);
+              time_end = clock();
+              network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+              send_bytes += INPUT_4M+SHA256_DIGEST_LENGTH;
 
-            recv(soc_id[2], buffer, INPUT_4M/4, 0);
+              recv(soc_id[0], buffer, 1,0);
+              time_beg = clock();
+            recv(soc_id[0], buffer, SHA256_DIGEST_LENGTH, 0);
+              time_end = clock();
+              network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+              recv_bytes += SHA256_DIGEST_LENGTH;
 
-            printf("Received Y\n");
-
+            printf("Received o/p from Cleve \n");
          }
-         else
-         {
-            memcpy(buffer, inputs + INPUT_4M/4, INPUT_4M);
-            send(soc_id[2], buffer, INPUT_4M/4, 0);
+         else{
+            memcpy(buffer, inputs + 3* INPUT_4M/4, INPUT_4M);
+              send(soc_id[0],buffer,1,0);
+              time_beg = clock();
+            send(soc_id[0], buffer, INPUT_4M/4, 0);
+              time_end = clock();
+              network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+              send_bytes += INPUT_4M/4;
 
-            recv(soc_id[2], buffer, INPUT_4M/4, 0);
+              recv(soc_id[0], buffer, 1,0);
+              time_beg = clock();
+            recv(soc_id[0], buffer, SHA256_DIGEST_LENGTH, 0);
+              time_end = clock();
+              network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+              recv_bytes += INPUT_4M+SHA256_DIGEST_LENGTH;
 
-            printf("Received Y\n");
+            printf("Received o/p from Cleve \n");
          }
-
 			}
 			break;
 		default:

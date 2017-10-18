@@ -6,7 +6,7 @@
 int blocks_in_one_round = MAX_PAYLOAD_SIZE/sizeof(block);
 int sha256_in_one_round = blocks_in_one_round/2;
 
-#define GC_FILE "circuits/sha_256.txt"
+#define GC_FILE "circuits/md5.txt"
 // #define DEBUG
 
 //time calculations
