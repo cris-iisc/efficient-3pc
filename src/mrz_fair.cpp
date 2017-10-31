@@ -2,11 +2,11 @@
 #include "../primitives/socket.h"
 
 //varies from circuit to circuits
-#define INPUT_4M 512
+#define INPUT_4M 256
 int blocks_in_one_round = MAX_PAYLOAD_SIZE/sizeof(block);
 int sha256_in_one_round = blocks_in_one_round/2;
 
-#define GC_FILE "circuits/sha_256.txt"
+#define GC_FILE "circuits/aes.txt"
 // #define DEBUG
 
 //time calculations
