@@ -11,7 +11,7 @@ garble_new(garble_circuit *gc, size_t n, size_t m, garble_type_e type)
 
     //memset(gc, '\0', sizeof(garble_circuit));
     gc->outputs = calloc(m, sizeof(int));
-    int ran=36;
+    int ran=26;
     for (int i = 0; i < m; ++i)
     {
         gc->outputs[i]=ran;

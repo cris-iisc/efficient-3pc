@@ -153,7 +153,7 @@ void circuitBuilding(buildCircuit *bC, garble_circuit *gc ,char* file){
 		else if(noi==1)
 		{
 			fscanf(fp,"%ld %ld %s\n", &g.input0, &g.output, str);
-			g.input1 = 0;
+			g.input1 = 999;
 		}
 
 		if(strcmp(str,"AND")==0)
