@@ -21,7 +21,7 @@
 #define HAVE_MEMORY_H 1
 
 /* Define to use msgpack library */
-#define HAVE_MSGPACK 1
+//#define HAVE_MSGPACK 1
 
 /* Define to 1 if you have the <openssl/rand.h> header file. */
 #define HAVE_OPENSSL_RAND_H 1

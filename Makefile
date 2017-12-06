@@ -20,7 +20,7 @@ LG_OBJECTS = libgarble/obj/*.o
 MSGPACK_INC = /opt/include
 MSGPACK_LIB = /opt/lib
 
-LIBRARIES = -lpthread  -lssl -lcrypto -lmsgpack #-L$(MSGPACK_LIB) -lgarble -lgarblec
+LIBRARIES = -lpthread  -lssl -lcrypto #-lmsgpack #-L$(MSGPACK_LIB) -lgarble -lgarblec
 
 CFLAGS = -O3 -msse4 -maes -march=x86-64 #-I$(MSGPACK_INC)
 
