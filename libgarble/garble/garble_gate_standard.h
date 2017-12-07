@@ -1,8 +1,8 @@
 #ifndef LIBGARBLE_GARBLE_GATE_STANDARD_H
 #define LIBGARBLE_GARBLE_GATE_STANDARD_H
 
-#include "garble.h"
-#include "garble/aes.h"
+#include "../garble.h"
+#include "../garble/aes.h"
 
 #include <assert.h>
 #include <string.h>
@@ -22,7 +22,7 @@ garble_gate_eval_standard(garble_gate_type_e type, block A, block B,
 
         a = garble_lsb(A);
         b = garble_lsb(B);
-        
+
         HA = garble_double(A);
         HB = garble_double(garble_double(B));
 
@@ -35,7 +35,7 @@ garble_gate_eval_standard(garble_gate_type_e type, block A, block B,
     }
 }
 
-    
+
 static inline void
 garble_gate_garble_standard(garble_gate_type_e type, block A0, block A1, block B0,
                             block B1, block *restrict out0, block *restrict out1,

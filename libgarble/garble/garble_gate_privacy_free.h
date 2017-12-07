@@ -1,8 +1,8 @@
 #ifndef LIBGARBLE_GARBLE_GATE_PRIVACY_FREE_H
 #define LIBGARBLE_GARBLE_GATE_PRIVACY_FREE_H
 
-#include "garble.h"
-#include "garble/aes.h"
+#include "../garble.h"
+#include "../garble/aes.h"
 
 #include <assert.h>
 #include <string.h>
@@ -46,7 +46,7 @@ garble_gate_eval_privacy_free(garble_gate_type_e type, block A, block B,
     }
 }
 
-    
+
 static inline void
 garble_gate_garble_privacy_free(garble_gate_type_e type, block A0, block A1,
                                 block B0, block B1, block *restrict out0, block *restrict out1,
