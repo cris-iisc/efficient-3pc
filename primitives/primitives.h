@@ -44,8 +44,9 @@ using namespace std;
 
 #define BUF_SIZE 2000
 #define AES128_3PC_CIRCUIT_FILE "circuits/AES128"
-#define SERVER_PORT 7887
-#define SERVER_PORT2 7889
+#define SERVER_PORT 7867
+#define SERVER_PORT2 7839
+#define SERVER_PORT3 7876
 #define FIXED_SEED 135
 
 typedef unsigned char u_char;

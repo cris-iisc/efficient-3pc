@@ -51,6 +51,7 @@ exec:
 	${CC} ${COMPILER_OPTIONS} -o mrz.exe src/mrz_original.cpp  ${OBJECTS_PRIM} ${JG_OBJECTS} ${CFLAGS} ${CPPFLAGS} ${DEBUG_OPTIONS} ${LG_OBJECTS_CORE} ${LIBRARIES} ${INCLUDE}
 	${CC} ${COMPILER_OPTIONS} -o fair.exe src/mrz_fair.cpp  ${OBJECTS_PRIM} ${JG_OBJECTS} ${CFLAGS} ${CPPFLAGS} ${DEBUG_OPTIONS} ${LG_OBJECTS_CORE} ${LIBRARIES} ${INCLUDE}
 	${CC} ${COMPILER_OPTIONS} -o goutput.exe src/mrz_goutput.cpp  ${OBJECTS_PRIM} ${JG_OBJECTS} ${CFLAGS} ${CPPFLAGS} ${DEBUG_OPTIONS} ${LG_OBJECTS_CORE} ${LIBRARIES} ${INCLUDE}
+	${CC} ${COMPILER_OPTIONS} -o 4pc.exe src/4pc_god.cpp  ${OBJECTS_PRIM} ${JG_OBJECTS} ${CFLAGS} ${CPPFLAGS} ${DEBUG_OPTIONS} ${LG_OBJECTS_CORE} ${LIBRARIES} ${INCLUDE}
 
 # this will compile all files amd create the object file
 core:${OBJECTS_CORE} #${OBJECTS_CORE_C}
