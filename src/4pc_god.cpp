@@ -12,14 +12,16 @@ int addr_soc[4];  // socket address for other parties
 int id; //0-P0, 1-P1, 2-P2, 3-P3
 
 //varies from circuit to circuits
-#define INPUT_4M 256
+#define INPUT_4M 512
 int blocks_in_one_round = MAX_PAYLOAD_SIZE/sizeof(block);
 int sha256_in_one_round = blocks_in_one_round/2;
 
-#define GC_FILE "circuits/aes.txt"
+#define GC_FILE "circuits/sha_256.txt"
+// #define GC_FILE "circuits/aes.txt"
 #define DEBUG
 
 //time calculations
+#define CLOCKS_PER_M_SEC 1000
 double comp_time = 0, network_time = 0;
 double wait_time = 0;
 
@@ -64,6 +66,7 @@ int INPUT_FIRST_SHARE = INPUT_4M/4 - 2 * INPUT_PER_SHARE;
 mutex round_mtx[4][4][4];
 mutex garble_done_mtx;
 mutex eval_complete;
+mutex comp_time_mtx;
 
 //Global variables used by both threads
 garble_circuit gc;
@@ -72,7 +75,7 @@ void* gc_hashh[4];
 block *inputLabels;
 block *outputMap;
 
-bool b[INPUT_4M];
+bool b[2*INPUT_4M];
 bool inputs[INPUT_4M];
 bool decomm[INPUT_4M];
 bool decom[INPUT_4M];
@@ -178,14 +181,27 @@ void combine_extractedLabels(){
 // Garbler 1 talks to Garbler 2 and vice versa
 int p0_p1_handler(){
   u_char buffer[MAX_PAYLOAD_SIZE];
-
+  clock_t time_beg, time_end;
   if(id == 0){//Garbler 1's side
     //generating randomness
     randomGen(b_array,INPUT_4M/8);
     seed = garble_seed(NULL);
 
-    send_input_commits(1);
+        //dummy send (for exact timing calculations)
+        send(addr_soc[1],buffer,1,0);
+        time_beg = clock();
+      send_input_commits(1);
+        time_end = clock();
+        network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+        send_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+
+      recv(addr_soc[1],buffer,1,0);
+      time_beg = clock();
     recv_input_commits(1);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes+= 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+
     memcpy(recvd_commitment[id], my_Commit, 4 * SHA256_DIGEST_LENGTH);
 
     //Sampling b===========================================================
@@ -195,16 +211,25 @@ int p0_p1_handler(){
         b[i*8+j] = (b_array[i]>>j)& 1;
       }
     }
-    // Sampled b------------------------------------------------------------
+  	// Sampled b------------------------------------------------------------
+
+    time_beg = clock();//computation time
+    //verify commitments
+    verifyRecvdCom(recvd_commitment[1][T[1][id][1]], recvd_open[1][T[1][id][1]], INPUT_PER_SHARE, 0, 1);
+    verifyRecvdCom(recvd_commitment[1][T[1][id][0]], recvd_open[1][T[1][id][0]], INPUT_PER_SHARE, 0, 1);
+    time_end = clock();
+    comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
     //sharing randomness
     memcpy(buffer,&seed,sizeof(block));
     memcpy(buffer+sizeof(block),b_array,INPUT_4M/8);
+      //dummy send (for exact timing calculations)
+      send(addr_soc[1],buffer,1,0);
+      time_beg = clock();
     send(addr_soc[1],buffer,INPUT_4M/8+sizeof(block),0);
-
-    //verify commitments
-    verifyRecvdCom(recvd_commitment[1][T[1][id][0]], recvd_open[1][T[1][id][0]], INPUT_PER_SHARE, 0, 1);
-    verifyRecvdCom(recvd_commitment[1][T[1][id][1]], recvd_open[1][T[1][id][1]], INPUT_PER_SHARE, 0, 1);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += INPUT_4M/8+sizeof(block);
 
     //P0_P1_R0 completed
     round_mtx[0][1][0].unlock();
@@ -217,9 +242,22 @@ int p0_p1_handler(){
 
     //Round 2===============================================================================
 
+    //dummy send (for exact timing calculations)
+      send(addr_soc[1],buffer,1,0);
+      time_beg = clock();
     send_input_commits_r2(1);
-    recv_input_commits_r2(1);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*4*SHA256_DIGEST_LENGTH+INPUT_FIRST_SHARE;
 
+  		recv(addr_soc[1],buffer,1,0);
+  		time_beg = clock();
+  	recv_input_commits_r2(1);
+  		time_end = clock();
+  		network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+  		recv_bytes+= 4*4*SHA256_DIGEST_LENGTH+INPUT_FIRST_SHARE;
+
+      time_beg = clock();//computation time
     //Garbling==============================================================
     inputLabels = garble_allocate_blocks(2 * gc.n);
     outputMap = garble_allocate_blocks(2 * gc.m);
@@ -263,6 +301,9 @@ int p0_p1_handler(){
     memcpy(inputLabels, gc.wires, 2 * gc.n * sizeof(block));
     garble_extract_labels1(extractedLabels, inputLabels, inputs, gc.n);
 
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+
     garble_done_mtx.unlock();
 
     //P0_P1_R1 completed
@@ -276,18 +317,40 @@ int p0_p1_handler(){
   }
   else if(id == 1){// Garbler 2's side
 
+      //dummy send (for exact timing calculations)
+      recv(addr_soc[0],buffer,1,0);
+      time_beg = clock();
     recv_input_commits(0);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes+= 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+
+      //dummy send (for timing calculations)
+      send(addr_soc[0],buffer,1,0);
+      time_beg = clock();
     send_input_commits(0);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+
+    //receive randomness
+      //dummy send (for exact timing calculations)
+      recv(addr_soc[0],buffer,1,0);
+      time_beg = clock();
+    recv(addr_soc[0],buffer,INPUT_4M/8+sizeof(block),0);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes+= INPUT_4M/8+sizeof(block);
+    memcpy(&seed,buffer,sizeof(block));
+    memcpy(b_array,buffer+sizeof(block),INPUT_4M/8);
+
+      time_beg = clock();//computation time
+
     memcpy(recvd_commitment[id], my_Commit, 4 * SHA256_DIGEST_LENGTH);
 
     //verify commitments
     verifyRecvdCom(recvd_commitment[0][T[0][id][0]], recvd_open[0][T[0][id][0]], INPUT_PER_SHARE, 1, 0);
     verifyRecvdCom(recvd_commitment[0][T[0][id][0]], recvd_open[0][T[0][id][0]], INPUT_PER_SHARE, 1, 0);
-
-    //receive randomness
-    recv(addr_soc[0],buffer,INPUT_4M/8+sizeof(block),0);
-    memcpy(&seed,buffer,sizeof(block));
-    memcpy(b_array,buffer+sizeof(block),INPUT_4M/8);
 
     seed = garble_seed(&seed);
 
@@ -299,6 +362,8 @@ int p0_p1_handler(){
       }
     }
     // Sampled b------------------------------------------------------------
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
     //P0_P1_R0 completed
     round_mtx[0][1][0].unlock();
@@ -311,9 +376,22 @@ int p0_p1_handler(){
     printf("\n*****\nRound one is complete ...\n******\n");
 
     //Round 2 ============================================================================
-
+      //dummy send (for exact timing calculations)
+      recv(addr_soc[0],buffer,1,0);
+      time_beg = clock();
     recv_input_commits_r2(0);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes+= 4*4*SHA256_DIGEST_LENGTH+INPUT_FIRST_SHARE;
+
+  		send(addr_soc[0],buffer,1,0);
+  		time_beg = clock();
     send_input_commits_r2(0);
+  		time_end = clock();
+  		network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+  		send_bytes += 4*4*SHA256_DIGEST_LENGTH+INPUT_FIRST_SHARE;
+
+      time_beg = clock();//computation time
 
     //Garbling==============================================================
     inputLabels = garble_allocate_blocks(2 * gc.n);
@@ -358,6 +436,8 @@ int p0_p1_handler(){
     }
     construct_inputs_from_openings();//reconstructing inputs
     garble_extract_labels1(extractedLabels, inputLabels, inputs, gc.n);
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
     garble_done_mtx.unlock();
 
@@ -379,14 +459,22 @@ int p0_p2_handler(){
   clock_t time_beg, time_end;
 
   if(id == 0){ //id 0 if
+  	  recv(addr_soc[2],buffer,1,0);
+  	  time_beg = clock();
     recv_input_commits(2);
-    cout << "Received init msg from Cleve!" << '\n';
     send_input_commits(2);
-    cout << "Sent init msg from Cleve!" << '\n';
+  	  time_end = clock();
+  	  network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+  	  send_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+  	  recv_bytes+= 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
 
+      time_beg = clock();//computation time
     //verify commitments
     verifyRecvdCom(recvd_commitment[2][T[2][0][0]], recvd_open[2][T[2][0][0]], INPUT_PER_SHARE, 0, 2);
     verifyRecvdCom(recvd_commitment[2][T[2][0][1]], recvd_open[2][T[2][0][1]], INPUT_PER_SHARE, 0, 2);
+      time_end = clock();
+  		comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+
 
     //P0_P2_R0 completed
     round_mtx[0][2][0].unlock();
@@ -397,14 +485,14 @@ int p0_p2_handler(){
     round_mtx[0][3][0].unlock();
 
     //Round 2===============================================================================
-
+  		send(addr_soc[2],buffer,1,0);
+  		time_beg = clock();
     send_input_commits_r2(2);
     recv_input_commits_r2(2);
-
-    //Sending b values of Evaluator 1===============================================
-    memcpy(buffer, b+INPUT_4M/2,sizeof(bool)*INPUT_4M/4);
-    send(addr_soc[2],buffer,sizeof(bool)*INPUT_4M/4,0);
-    //Sent b values to the evaluator----------------------------------------------
+  		time_end = clock();
+  		network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+  		send_bytes += 4*4*SHA256_DIGEST_LENGTH;
+  		recv_bytes+= 4*4*SHA256_DIGEST_LENGTH;
 
     garble_done_mtx.lock();
     garble_done_mtx.unlock();
@@ -416,6 +504,15 @@ int p0_p2_handler(){
       printf("Sending commitments...\n");
       // printf("no of rounds = %d ; blk_in lst_round %d\n",no_of_rounds,blocks_in_last_round);
     #endif
+
+      //dummy send (for exact timing calculations)
+      send(addr_soc[2],buffer,1,0);
+      time_beg = clock();
+
+    //Sending b values of Evaluator 1===============================================
+    memcpy(buffer, b,sizeof(bool)*INPUT_4M);
+    send(addr_soc[2],buffer,sizeof(bool)*INPUT_4M,0);
+    //Sent b values to the evaluator----------------------------------------------
 
     for(j=0;j< no_of_rounds;++j){
         memcpy(buffer,&commit_msg[j*sha256_in_one_round],sha256_in_one_round*SHA256_DIGEST_LENGTH);
@@ -460,6 +557,10 @@ int p0_p2_handler(){
     memcpy(buffer,extractedLabels,sizeof(block) * gc.n);
     send(addr_soc[2],buffer,sizeof(block) * gc.n,0);
 
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += gc.n*2*SHA256_DIGEST_LENGTH+2*size_of_table*sizeof(block)+gc.m+INPUT_4M+ INPUT_4M+sizeof(block)*gc.n;
+
     //P0_P2_R1 completed
     round_mtx[0][2][1].unlock();
 	  //Waiting for other threds to complete round 0(1)
@@ -470,6 +571,8 @@ int p0_p2_handler(){
 
     //Round 3=======================================================================
 
+      recv(addr_soc[2],buffer,1,0);
+      time_beg = clock();
     //receving Y from evaluator.===============================================
     computedOutputMap = garble_allocate_blocks(gc.m);
     outputVals = (bool*) calloc(gc.m, sizeof(bool));
@@ -477,11 +580,18 @@ int p0_p2_handler(){
     memcpy(computedOutputMap,buffer,sizeof(block) * gc.m);
     printf("receved Y from evaluator\no/p : ");
 
-    for(int i=0;i<5;i++){
-     print128_num(computedOutputMap[i]);
-    }
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes += sizeof(block) * gc.m;
 
+    // for(int i=0;i<5;i++){
+    //  print128_num(computedOutputMap[i]);
+    // }
+      time_beg = clock();//computation time
     assert(garble_map_outputs(outputMap, computedOutputMap, outputVals, gc.m) == GARBLE_OK);
+      time_end = clock();
+  		comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+
 
     cout<<"\n\nOUTPUT\n-------------------\n";
     for(int i=0;i<gc.m;i++){
@@ -490,10 +600,15 @@ int p0_p2_handler(){
     cout<<"\n-------------------\n\n";
 
     //Round 4 ============================================================================
+      send(addr_soc[2],buffer,1,0);
+      time_beg = clock();
     //sending decoding info to evaluator
     memcpy(buffer, outputVals, sizeof(bool)*gc.m);
     send(addr_soc[2], buffer, sizeof(bool) *gc.m,0);
     cout << "Snt decoding info to Evaluator 1" << '\n';
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += sizeof(block) * gc.m;
 
   }
   else if(id == 2){ //id 2 else
@@ -501,15 +616,24 @@ int p0_p2_handler(){
     #ifdef DEBUG
       cout<<"Handling Alice..\nsending initialization msg to Alice\n";
     #endif
+  		send(addr_soc[0],buffer,1,0);
+  		time_beg = clock();
   	send_input_commits(0);
-    printf("Sent init msg to Alice\n");
     recv_input_commits(0);
-    printf("Recvd init msg from Alice \n");
-    memcpy(recvd_commitment[id], my_Commit, 4 * SHA256_DIGEST_LENGTH);
+  		time_end = clock();
+  		network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+  		send_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+  		recv_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
 
+
+      time_beg = clock();//computation time
+    memcpy(recvd_commitment[id], my_Commit, 4 * SHA256_DIGEST_LENGTH);
     //verify commitments
     verifyRecvdCom(recvd_commitment[0][T[2][0][0]], recvd_open[0][T[2][0][0]], INPUT_FIRST_SHARE, 2, 0);
     verifyRecvdCom(recvd_commitment[0][T[2][0][1]], recvd_open[0][T[2][0][1]], INPUT_PER_SHARE, 2, 0);
+      time_end = clock();
+  		comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+
 
     //P0_P2_R0 completed
     round_mtx[0][2][0].unlock();
@@ -520,18 +644,31 @@ int p0_p2_handler(){
     round_mtx[2][3][0].unlock();
 
     //Round 2===============================================================================
-
+  		recv(addr_soc[0],buffer,1,0);
+  		time_beg = clock();
     recv_input_commits_r2(0);
     send_input_commits_r2(0);
-
-    //Receiving b values==========================================================
-    recv(addr_soc[0],buffer, sizeof(bool)*INPUT_4M/4, 0);
-    memcpy(b+INPUT_4M/2,buffer,sizeof(bool)*INPUT_4M/4);
+  	  time_end = clock();
+  	  network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+  	  send_bytes += 4*4*SHA256_DIGEST_LENGTH;
+  	  recv_bytes+= 4*4*SHA256_DIGEST_LENGTH;
 
     //receving commitments========================================================
     char commit_msg[gc.n*2][SHA256_DIGEST_LENGTH];
     int no_of_rounds = (gc.n*2/sha256_in_one_round);
     int blocks_in_last_round = gc.n*2 %blocks_in_one_round;
+    extractedLabels0 = garble_allocate_blocks(gc.n);
+    gc.output_perms = (bool *)calloc(gc.m, sizeof(bool));
+    for (int i = INPUT_4M/2; i < INPUT_4M; ++i){
+      decomm[i] = (inputs[i] + b[i]) % 2;
+    }
+
+      recv(addr_soc[0],buffer,1,0);
+      time_beg = clock();
+
+    //Receiving b values==========================================================
+    recv(addr_soc[0],buffer, sizeof(bool)*INPUT_4M, 0);
+    memcpy(b,buffer,sizeof(bool)*INPUT_4M);
 
     for(j=0;j< no_of_rounds;++j){
         recv(addr_soc[0],buffer,sha256_in_one_round*SHA256_DIGEST_LENGTH,0);
@@ -559,25 +696,13 @@ int p0_p2_handler(){
     memcpy(gc.table+j*blocks_in_one_round,buffer,blocks_in_last_round*sizeof(block));
 
     #ifdef DEBUG
-    printf("Received GC!\n");
+      printf("Received GC!\n");
     #endif
-
-    garble_hash(&gc, hashh1);
-    #ifdef DEBUG
-      printf("hashh111 Computed\n");
-      printf("%s\n", hashh1);
-    #endif
-
-    extractedLabels0 = garble_allocate_blocks(gc.n);
-    gc.output_perms = (bool *)calloc(gc.m, sizeof(bool));
 
     recv(addr_soc[0],buffer,sizeof(bool)*gc.m,0);
     memcpy(gc.output_perms,buffer,sizeof(bool)*gc.m);
 
     //recive decomitments=========================================================
-    for (int i = INPUT_4M/2; i < INPUT_4M; ++i){
-        decomm[i] = (inputs[i] + b[i]) % 2;
-    }
 
     recv(addr_soc[0], buffer, sizeof(bool) * INPUT_4M, 0);
     memcpy(decomm+(id*INPUT_4M/4), buffer+(id*INPUT_4M/4), sizeof(bool) * INPUT_4M/4);
@@ -590,8 +715,21 @@ int p0_p2_handler(){
     memcpy(extractedLabels0,buffer,sizeof(block) * gc.n);
 
     #ifdef DEBUG
-      printf("received extractedLabels\n");
+    printf("received extractedLabels\n");
     #endif
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes+= gc.n*2*SHA256_DIGEST_LENGTH+2*size_of_table*sizeof(block)+gc.m+INPUT_4M+ INPUT_4M+sizeof(block)*gc.n;
+
+	  time_beg = clock();//computation time
+    garble_hash(&gc, hashh1);
+	  time_end = clock();
+	  comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+    #ifdef DEBUG
+      printf("hashh111 Computed\n");
+      printf("%s\n", hashh1);
+    #endif
+
 
     garble_done_mtx.unlock();
 
@@ -613,6 +751,7 @@ int p0_p2_handler(){
     #ifdef DEBUG
     printf("Evaluation started\n");
     #endif
+      time_beg = clock();//computation time
     combine_extractedLabels();
     computedOutputMap = garble_allocate_blocks(gc.m);
     outputVals = (bool*) calloc(gc.m, sizeof(bool));
@@ -620,16 +759,29 @@ int p0_p2_handler(){
       printf("Evaluation failed..!\nAborting..\n");
       exit(0);
     }
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
+      send(addr_soc[0],buffer,1,0);
+  		time_beg = clock();
     // //Round 3=======================================================================
     memcpy(buffer,computedOutputMap,sizeof(block) * gc.m);
     send(addr_soc[0], buffer, sizeof(block) * gc.m, 0);
 
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += sizeof(block) * gc.m;
+
     //Round 4 ============================================================================
+      recv(addr_soc[0],buffer,1,0);
+      time_beg = clock();
     //sending decoding info to evaluator
     outputVals = (bool*) calloc(gc.m, sizeof(bool));
     recv(addr_soc[0], buffer, sizeof(bool) *gc.m,0);
     memcpy(outputVals, buffer, sizeof(bool)*gc.m);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes += sizeof(block) * gc.m;
 
     cout<<"\n\nOUTPUT\n-------------------\n";
     for(int i=0;i<gc.m;i++){
@@ -641,18 +793,25 @@ int p0_p2_handler(){
 // Garbler 1 v/s Evaluator 2
 int p0_p3_handler(){
   u_char buffer[MAX_PAYLOAD_SIZE];
-
+  clock_t time_beg, time_end;
   if(id == 0){
 
+      recv(addr_soc[3],buffer,1,0);
+      time_beg = clock();
     recv_input_commits(3);
-    cout << "Received init msg from Cleve!" << '\n';
-
     send_input_commits(3);
-    cout << "Sent init msg from Doe!" << '\n';
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+      recv_bytes+= 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
 
+      time_beg = clock();//computation time
     //verify commitments
     verifyRecvdCom(recvd_commitment[3][T[3][0][0]], recvd_open[3][T[3][0][0]], INPUT_PER_SHARE, 0, 3);
     verifyRecvdCom(recvd_commitment[3][T[3][0][1]], recvd_open[3][T[3][0][1]], INPUT_PER_SHARE, 0, 3);
+      time_end = clock();
+  		comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+
 
     //P0_P3_R0 completed
     round_mtx[0][3][0].unlock();
@@ -664,16 +823,25 @@ int p0_p3_handler(){
 
     //Round 2===============================================================================
 
+      send(addr_soc[3],buffer,1,0);
+      time_beg = clock();
     send_input_commits_r2(3);
     recv_input_commits_r2(3);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*4*SHA256_DIGEST_LENGTH;
+      recv_bytes+= 4*4*SHA256_DIGEST_LENGTH;
 
-    //Sending b values of Evaluator===============================================
-    memcpy(buffer, b+3*INPUT_4M/4,sizeof(bool)*INPUT_4M/4);
-    send(addr_soc[3],buffer,sizeof(bool)*INPUT_4M/4,0);
-    //Sent b values to the evaluator----------------------------------------------
 
     garble_done_mtx.lock();
     garble_done_mtx.unlock();
+
+      send(addr_soc[3],buffer,1,0);
+      time_beg = clock();
+    //Sending b values of Evaluator===============================================
+    memcpy(buffer, b,sizeof(bool)*INPUT_4M);
+    send(addr_soc[3],buffer,sizeof(bool)*INPUT_4M,0);
+    //Sent b values to the evaluator----------------------------------------------
 
     //Sending Cs==================================================================
     //sending comitments for input wires.
@@ -719,6 +887,10 @@ int p0_p3_handler(){
     memcpy(buffer, extractedLabels, sizeof(block) * gc.n);
     send(addr_soc[3], buffer, sizeof(block) * gc.n,0);
 
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += INPUT_4M*2+gc.n*2*SHA256_DIGEST_LENGTH+SHA256_DIGEST_LENGTH+sizeof(block) * gc.n;
+
     //P0_P3_R1 completed
     round_mtx[0][3][1].unlock();
 	  //Waiting for other threds to complete round 0(1)
@@ -735,15 +907,21 @@ int p0_p3_handler(){
     #ifdef DEBUG
       cout<<"Handling Alice..\nsending initialization msg to Alice\n";
     #endif
-
+      send(addr_soc[0],buffer,1,0);
+      time_beg = clock();
     send_input_commits(0);
-    printf("Sent init msg to Alice\n");
     recv_input_commits(0);
-    printf("Recvd init msg from Alice \n");
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+      recv_bytes+= 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
 
+      time_beg = clock();//computation time
     //verify commitments
     verifyRecvdCom(recvd_commitment[0][T[3][0][0]], recvd_open[0][T[3][0][0]], INPUT_FIRST_SHARE, 3, 0);
     verifyRecvdCom(recvd_commitment[0][T[3][0][1]], recvd_open[0][T[3][0][1]], INPUT_PER_SHARE, 3, 0);
+      time_end = clock();
+  		comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
     //P0_P3_R0 completed
     round_mtx[0][3][0].unlock();
@@ -755,12 +933,20 @@ int p0_p3_handler(){
 
     //Round 2===============================================================================
 
+      recv(addr_soc[0],buffer,1,0);
+      time_beg = clock();
     recv_input_commits_r2(0);
     send_input_commits_r2(0);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*4*SHA256_DIGEST_LENGTH;
+      recv_bytes+= 4*4*SHA256_DIGEST_LENGTH;
 
+      recv(addr_soc[0],buffer,1,0);
+      time_beg = clock();
     //Receiving b values==========================================================
-    recv(addr_soc[0],buffer, sizeof(bool)*INPUT_4M/4, 0);
-    memcpy(b+INPUT_4M/4,buffer,sizeof(bool)*INPUT_4M/4);
+    recv(addr_soc[0],buffer, sizeof(bool)*INPUT_4M, 0);
+    memcpy(b,buffer,sizeof(bool)*INPUT_4M);
 
     #ifdef DEBUG
       printf("Received b values\n");
@@ -815,9 +1001,14 @@ int p0_p3_handler(){
     #ifdef DEBUG
     printf("received extractedLabels\n");
     #endif
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes+= INPUT_4M*2+gc.n*2*SHA256_DIGEST_LENGTH+SHA256_DIGEST_LENGTH+sizeof(block) * gc.n;
 
     garble_done_mtx.lock();
     garble_done_mtx.unlock();
+
+      time_beg = clock();//computation time
 
     // varification of commitment==================================================
     if(memcmp(commit_ip[0],commit_ip[1],gc.n*2*SHA256_DIGEST_LENGTH) != 0){
@@ -836,6 +1027,8 @@ int p0_p3_handler(){
         cout<<"Hashes are equal!!!\n";
     }
 
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
     //P0_P3_R1 completed
     round_mtx[0][3][1].unlock();
 	  //Waiting for other threds to complete round 0(1)
@@ -853,21 +1046,28 @@ int p0_p3_handler(){
 // Garbler 2 v/s Evaluator 1
 int p1_p2_handler(){
   u_char buffer[MAX_PAYLOAD_SIZE];
-
+  clock_t time_beg, time_end;
   if(id == 1){
 
     #ifdef DEBUG
       std::cout << "Waiting for Cleve's message" << '\n';
     #endif
 
+      recv(addr_soc[2],buffer,1,0);
+      time_beg = clock();
     recv_input_commits(2);
-    cout << "Received init msg from Cleve!" << '\n';
     send_input_commits(2);
-    cout << "Sent init msg from Cleve!" << '\n';
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+      recv_bytes+= 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
 
+      time_beg = clock();//computation time
     //verify commitments
     verifyRecvdCom(recvd_commitment[2][T[2][1][0]], recvd_open[2][T[2][1][0]], INPUT_FIRST_SHARE, 1, 2);
     verifyRecvdCom(recvd_commitment[2][T[2][1][1]], recvd_open[2][T[2][1][1]], INPUT_PER_SHARE, 1, 2);
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
     //P1_P2_R0 completed
     round_mtx[1][2][0].unlock();
@@ -878,16 +1078,24 @@ int p1_p2_handler(){
   	round_mtx[1][3][0].unlock();
 
     //Round 2===============================================================================
+      send(addr_soc[2],buffer,1,0);
+      time_beg = clock();
     send_input_commits_r2(2);
     recv_input_commits_r2(2);
-
-    //Sending b values of Evaluator===============================================
-    memcpy(buffer, b+INPUT_4M/2,sizeof(bool)*INPUT_4M/4);
-    send(addr_soc[2],buffer,sizeof(bool)*INPUT_4M/4,0);
-    //Sent b values to the evaluator----------------------------------------------
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*4*SHA256_DIGEST_LENGTH;
+      recv_bytes+= 4*4*SHA256_DIGEST_LENGTH;
 
     garble_done_mtx.lock();
     garble_done_mtx.unlock();
+
+      send(addr_soc[2],buffer,1,0);
+      time_beg = clock();
+    //Sending b values of Evaluator===============================================
+    memcpy(buffer, b,sizeof(bool)*INPUT_4M);
+    send(addr_soc[2],buffer,sizeof(bool)*INPUT_4M,0);
+    //Sent b values to the evaluator----------------------------------------------
 
     //Sending Cs==================================================================
     //sending comitments for input wires.
@@ -933,6 +1141,10 @@ int p1_p2_handler(){
     send(addr_soc[2], buffer, sizeof(block) * gc.n,0);
     //Sent Decommitments-------------------------------------------------------------
 
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += INPUT_4M*2+gc.n*2*SHA256_DIGEST_LENGTH+SHA256_DIGEST_LENGTH+sizeof(block) * gc.n;
+
     //P1_P2_R1 completed
     round_mtx[1][2][1].unlock();
   	//Waiting for other threds to complete round 0(1)
@@ -943,30 +1155,24 @@ int p1_p2_handler(){
 
     //Round 3=======================================================================
 
-    //  //receving Y from evaluator.===============================================
-    //  recv(addr_soc[2], buffer, sizeof(block) * gc.m, 0);
-    //  memcpy(computedOutputMap,buffer,sizeof(block) * gc.m);
-    //  printf("receved Y from evaluator\no/p : ");
-
-    //  assert(garble_map_outputs(outputMap, computedOutputMap, outputVals, gc.m) == GARBLE_OK);
-
-    //  //Round 4 ============================================================================
-    //  //sending decoding info to evaluator
-    //  memcpy(buffer, outputMap, sizeof(block)*2*gc.m);
-    //  send(addr_soc[2], buffer, sizeof(block) * 2 * gc.m,0);
-
-    //  std::cout << "Snt decoding info to Evaluator 1" << '\n';
-
   }
   else if(id == 2){
-    send_input_commits(1);
-    printf("Sent init msg to Bob \n");
-    recv_input_commits(1);
-    printf("Recvd init msg From Bob \n");
 
+      send(addr_soc[1],buffer,1,0);
+      time_beg = clock();
+    send_input_commits(1);
+    recv_input_commits(1);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+      recv_bytes+= 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+
+    time_beg = clock();//computation time
     //verify commitments
     verifyRecvdCom(recvd_commitment[1][T[2][1][0]], recvd_open[1][T[2][1][0]], INPUT_FIRST_SHARE, 2, 1);
     verifyRecvdCom(recvd_commitment[1][T[2][1][1]], recvd_open[1][T[2][1][1]], INPUT_PER_SHARE, 2, 1);
+    time_end = clock();
+		comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
     //P1_P2_R0 completed
     round_mtx[1][2][0].unlock();
@@ -977,21 +1183,24 @@ int p1_p2_handler(){
     round_mtx[2][3][0].unlock();
 
 	  //Round 2===============================================================================
-
-    send_input_commits_r2(1);
+      recv(addr_soc[1],buffer,1,0);
+      time_beg = clock();
     recv_input_commits_r2(1);
+    send_input_commits_r2(1);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*4*SHA256_DIGEST_LENGTH;
+      recv_bytes+= 4*4*SHA256_DIGEST_LENGTH;
 
+      recv(addr_soc[1],buffer,1,0);
+      time_beg = clock();
     //Receiving b values==========================================================
-    recv(addr_soc[1],buffer, sizeof(bool)*INPUT_4M/4, 0);
-    memcpy(b+INPUT_4M/2,buffer,sizeof(bool)*INPUT_4M/4);
+    recv(addr_soc[1],buffer, sizeof(bool)*INPUT_4M, 0);
+    memcpy(b+INPUT_4M,buffer,sizeof(bool)*INPUT_4M);
 
     #ifdef DEBUG
       printf("Received b values\n");
     #endif
-
-    if(memcmp(b,b+INPUT_4M/2,sizeof(bool)*INPUT_4M/4)!=0){
-      printf("received b values are not equal for P3\t aborting...\n");
-    }
 
     //receving commitments========================================================
     char commit_msg[gc.n*2][SHA256_DIGEST_LENGTH];
@@ -1024,9 +1233,19 @@ int p1_p2_handler(){
       printf("%s\n", hashh);
     #endif
 
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes+= INPUT_4M*2+gc.n*2*SHA256_DIGEST_LENGTH+SHA256_DIGEST_LENGTH+sizeof(block) * gc.n;
+
     garble_done_mtx.lock();
     garble_done_mtx.unlock();
+
+      time_beg = clock();//computation time
+
     //varification of commitment==================================================
+    if(memcmp(b,b+INPUT_4M,sizeof(bool)*INPUT_4M)!=0){
+      printf("received b values are not equal for P3\t aborting...\n");
+    }
 
     if(memcmp(commit_ip[0],commit_ip[1],gc.n*2*SHA256_DIGEST_LENGTH) != 0){
         cout<<"commitment for G1&G2 are not equal\naborting..\n";
@@ -1043,6 +1262,8 @@ int p1_p2_handler(){
         cout<<"Hashes are equal!!!\n";
     }
 
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
     //recive decomitments=========================================================
     for (int i = INPUT_4M/2; i < INPUT_4M; ++i){
         decomm[i] = (inputs[i] + b[i]) % 2;
@@ -1102,18 +1323,18 @@ int p1_p2_handler(){
 // Garbler 2 v/s Evaluator 2
 int p1_p3_handler(){
   u_char buffer[MAX_PAYLOAD_SIZE];
-
+  clock_t time_beg, time_end;
   if(id == 1){
+      recv(addr_soc[3],buffer,1,0);
+      time_beg = clock();
     recv_input_commits(3);
-    #ifdef DEBUG
-      std::cout << "Recived Doe's message" << '\n';
-    #endif
-
     send_input_commits(3);
-    #ifdef DEBUG
-      std::cout << "Sent Doe's init message" << '\n';
-    #endif
+      time_end = clock();
+  	  network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+  	  send_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+  	  recv_bytes+= 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
 
+    //
     //verify commitments
     verifyRecvdCom(recvd_commitment[3][T[3][1][0]], recvd_open[3][T[3][1][0]], INPUT_FIRST_SHARE, 1, 3);
     verifyRecvdCom(recvd_commitment[3][T[3][1][1]], recvd_open[3][T[3][1][1]], INPUT_PER_SHARE, 1, 3);
@@ -1128,27 +1349,36 @@ int p1_p3_handler(){
     round_mtx[1][2][0].unlock();
 
     //Round 2===============================================================================
-
+      send(addr_soc[3],buffer,1,0);
+      time_beg = clock();
     send_input_commits_r2(3);
     recv_input_commits_r2(3);
-
-    //Sending b values of Evaluator===============================================
-    memcpy(buffer, b+3*INPUT_4M/4,sizeof(bool)*INPUT_4M/4);
-    send(addr_soc[3],buffer,sizeof(bool)*INPUT_4M/4,0);
-
-    //Sent b values to the evaluator----------------------------------------------
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*4*SHA256_DIGEST_LENGTH;
+      recv_bytes+= 4*4*SHA256_DIGEST_LENGTH;
 
     garble_done_mtx.lock();
     garble_done_mtx.unlock();
+
     //Sending Cs==================================================================
     //sending comitments for input wires.
     int no_of_rounds = (gc.n*2/sha256_in_one_round),j;
     int blocks_in_last_round = gc.n*2 %blocks_in_one_round;
     #ifdef DEBUG
-      printf("Sending commitments...\n");
-      // printf("no of rounds = %d ; blk_in lst_round %d\n",no_of_rounds,blocks_in_last_round);
+    printf("Sending commitments...\n");
+    // printf("no of rounds = %d ; blk_in lst_round %d\n",no_of_rounds,blocks_in_last_round);
     #endif
-    // u_char **commit_msg= (u_char**)commit_ip[id];
+
+      //dummy send (for exact timing calculations)
+      send(addr_soc[3],buffer,1,0);
+      time_beg = clock();
+
+    //Sending b values of Evaluator===============================================
+    memcpy(buffer, b+3*INPUT_4M/4,sizeof(bool)*INPUT_4M/4);
+    send(addr_soc[3],buffer,sizeof(bool)*INPUT_4M/4,0);
+    //Sent b values to the evaluator----------------------------------------------
+
     for(j=0;j< no_of_rounds;++j){
         memcpy(buffer,&commit_msg[j*sha256_in_one_round],sha256_in_one_round*SHA256_DIGEST_LENGTH);
         send(addr_soc[3],buffer,sha256_in_one_round*SHA256_DIGEST_LENGTH,0);
@@ -1193,6 +1423,10 @@ int p1_p3_handler(){
     memcpy(buffer,extractedLabels,sizeof(block) * gc.n);
     send(addr_soc[3],buffer,sizeof(block) * gc.n,0);
 
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += gc.n*2*SHA256_DIGEST_LENGTH+2*size_of_table*sizeof(block)+gc.m+INPUT_4M+ INPUT_4M+sizeof(block)*gc.n;
+
     //P1_P3_R1 completed
     round_mtx[1][3][1].unlock();
 	  //Waiting for other threds to complete round 0(1)
@@ -1207,11 +1441,19 @@ int p1_p3_handler(){
 
     computedOutputMap = garble_allocate_blocks(gc.m);
     outputVals = (bool*) calloc(gc.m, sizeof(bool));
+      recv(addr_soc[3],buffer,1,0);
+      time_beg = clock();
     recv(addr_soc[3], buffer, sizeof(block) * gc.m, 0);
     memcpy(computedOutputMap,buffer,sizeof(block) * gc.m);
     printf("receved Y from evaluator\no/p : ");
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes += sizeof(block) * gc.m;
 
+      time_beg = clock();//computation time
     assert(garble_map_outputs(outputMap, computedOutputMap, outputVals, gc.m) == GARBLE_OK);
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
     cout<<"\n\nOUTPUT\n-------------------\n";
     for(int i=0;i<gc.m;i++){
@@ -1220,22 +1462,34 @@ int p1_p3_handler(){
     cout<<"\n-------------------\n\n";
 
     //Round 4 ============================================================================
+      send(addr_soc[3],buffer,1,0);
+      time_beg = clock();
     //sending decoding info to evaluator
     memcpy(buffer, outputVals, sizeof(bool)*gc.m);
     send(addr_soc[3], buffer, sizeof(bool) *gc.m,0);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += sizeof(block) * gc.m;
+
     cout << "Snt decoding info to Evaluator 2" << '\n';
 
   }
   else if(id == 3){
+      send(addr_soc[1],buffer,1,0);
+      time_beg = clock();
     send_input_commits(1);
-    printf("Sent init msg to Bob \n");
-
     recv_input_commits(1);
-    printf("Recvd init msg From Bob \n");
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+      recv_bytes+= 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
 
+      time_beg = clock();//computation time
     //verify commitments
     verifyRecvdCom(recvd_commitment[1][T[3][1][0]], recvd_open[1][T[3][1][0]], INPUT_FIRST_SHARE, 3, 1);
     verifyRecvdCom(recvd_commitment[1][T[3][1][1]], recvd_open[1][T[3][1][1]], INPUT_PER_SHARE, 3, 1);
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
     //P1_P3_R0 completed
     round_mtx[1][3][0].unlock();
@@ -1246,13 +1500,16 @@ int p1_p3_handler(){
     round_mtx[0][3][0].unlock();
 
     //Round 2===============================================================================
-
-    recv_input_commits_r2(1);
-    send_input_commits_r2(1);
-
-    //Receiving b values==========================================================
+      recv(addr_soc[1],buffer,1,0);
+      time_beg = clock();
     recv(addr_soc[1],buffer, sizeof(bool)*INPUT_4M/4, 0);
     memcpy(b+3*INPUT_4M/4,buffer,sizeof(bool)*INPUT_4M/4);
+    recv_input_commits_r2(1);
+    send_input_commits_r2(1);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*4*SHA256_DIGEST_LENGTH;
+      recv_bytes+= 4*4*SHA256_DIGEST_LENGTH;
 
     #ifdef DEBUG
       printf("Received b values from bob\n");
@@ -1267,6 +1524,14 @@ int p1_p3_handler(){
     int no_of_rounds = (gc.n*2/sha256_in_one_round),j;
     int blocks_in_last_round = gc.n*2 %blocks_in_one_round;
     char commit_msg[gc.n*2][SHA256_DIGEST_LENGTH];
+
+      recv(addr_soc[1],buffer,1,0);
+      time_beg = clock();
+
+    //Receiving b values==========================================================
+    recv(addr_soc[1],buffer, sizeof(bool)*INPUT_4M/4, 0);
+    memcpy(b+3*INPUT_4M/4,buffer,sizeof(bool)*INPUT_4M/4);
+
     for(j=0;j< no_of_rounds;++j){
         recv(addr_soc[1],buffer,sha256_in_one_round*SHA256_DIGEST_LENGTH,0);
         memcpy(&commit_msg[j*sha256_in_one_round],buffer,sha256_in_one_round*SHA256_DIGEST_LENGTH);
@@ -1296,12 +1561,6 @@ int p1_p3_handler(){
     printf("Received GC!\n");
     #endif
 
-    garble_hash(&gc, hashh1);
-    #ifdef DEBUG
-      printf("hashh111 Computed\n");
-      printf("%s\n", hashh1);
-    #endif
-
     extractedLabels1 = garble_allocate_blocks(gc.n);
     gc.output_perms = (bool *)calloc(gc.m, sizeof(bool));
 
@@ -1323,6 +1582,19 @@ int p1_p3_handler(){
     printf("received extractedLabels\n");
     #endif
 
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes+= gc.n*2*SHA256_DIGEST_LENGTH+2*size_of_table*sizeof(block)+gc.m+INPUT_4M+ INPUT_4M+sizeof(block)*gc.n;
+
+      time_beg = clock();//computation time
+    garble_hash(&gc, hashh1);
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+    #ifdef DEBUG
+      printf("hashh111 Computed\n");
+      printf("%s\n", hashh1);
+    #endif
+
     garble_done_mtx.unlock();
 
     //P1_P3_R1 completed
@@ -1337,6 +1609,7 @@ int p1_p3_handler(){
     #ifdef DEBUG
     printf("Evaluation started\n");
     #endif
+      time_beg = clock();//computation time
     combine_extractedLabels();
     computedOutputMap = garble_allocate_blocks(gc.m);
     outputVals = (bool*) calloc(gc.m, sizeof(bool));
@@ -1344,17 +1617,30 @@ int p1_p3_handler(){
       printf("Evaluation failed..!\nAborting..\n");
       exit(0);
     }
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
     // //Round 3=======================================================================
+    //Round 4 ============================================================================
+      send(addr_soc[1],buffer,1,0);
+      time_beg = clock();
     memcpy(buffer,computedOutputMap,sizeof(block) * gc.m);
     send(addr_soc[1], buffer, sizeof(block) * gc.m, 0);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += sizeof(block) * gc.m;
 
 
     //Round 4 ============================================================================
+      recv(addr_soc[2],buffer,1,0);
+      time_beg = clock();
     //sending decoding info to evaluator
     outputVals = (bool*) calloc(gc.m, sizeof(bool));
     recv(addr_soc[1], buffer, sizeof(bool) *gc.m,0);
     memcpy(outputVals, buffer, sizeof(bool)*gc.m);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes += sizeof(block) * gc.m;
 
     cout<<"\n\nOUTPUT\n-------------------\n";
     for(int i=0;i<gc.m;i++){
@@ -1367,18 +1653,23 @@ int p1_p3_handler(){
 //  Evaluator 1 v/s Evaluator 2
 int p2_p3_handler(){
   u_char buffer[MAX_PAYLOAD_SIZE];
-
+  clock_t time_beg, time_end;
   if(id == 2){
-
+      send(addr_soc[3],buffer,1,0);
+      time_beg = clock();
     send_input_commits(3);
-    printf("Sent init msg to Doe \n");
-
     recv_input_commits(3);
-    printf("Recvd init msg From Doe \n");
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+      recv_bytes+= 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
 
-   //verify commitments
+      time_beg = clock();//computation time
+    //verify commitments
     verifyRecvdCom(recvd_commitment[3][T[3][2][0]], recvd_open[3][T[3][2][0]], INPUT_FIRST_SHARE, 2, 3);
     verifyRecvdCom(recvd_commitment[3][T[3][2][1]], recvd_open[3][T[3][2][1]], INPUT_PER_SHARE, 2, 3);
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
     //P2_P3_R0 completed
     round_mtx[2][3][0].unlock();
@@ -1390,9 +1681,14 @@ int p2_p3_handler(){
 	  printf("\n*****\nRound one is complete ...\n******\n");
 
     //Round 2===============================================================================
-
+      send(addr_soc[3],buffer,1,0);
+      time_beg = clock();
     send_input_commits_r2(3);
     recv_input_commits_r2(3);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*4*SHA256_DIGEST_LENGTH;
+      recv_bytes+= 4*4*SHA256_DIGEST_LENGTH;
 
     //P2_P3_R1 completed
     round_mtx[2][3][1].unlock();
@@ -1403,17 +1699,23 @@ int p2_p3_handler(){
     round_mtx[1][2][1].unlock();
   }
   else if(id == 3){
-
+      recv(addr_soc[2],buffer,1,0);
+      time_beg = clock();
     recv_input_commits(2);
-    printf("Recvd init msg From Cleve \n");
-
     send_input_commits(2);
-    printf("Sent init msg to Cleve \n");
+      time_end = clock();
+  	  network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+  	  send_bytes += 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+  	  recv_bytes+= 4*SHA256_DIGEST_LENGTH +2*INPUT_FIRST_SHARE;
+
     memcpy(recvd_commitment[id], my_Commit, 4 * SHA256_DIGEST_LENGTH);
 
+      time_beg = clock();//computation time
     //verify commitments
     verifyRecvdCom(recvd_commitment[2][T[2][3][0]], recvd_open[2][T[2][3][0]], INPUT_FIRST_SHARE, 3, 2);
     verifyRecvdCom(recvd_commitment[2][T[2][3][1]], recvd_open[2][T[2][3][1]], INPUT_PER_SHARE, 3, 2);
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
     //P2_P3_R0 completed
     round_mtx[2][3][0].unlock();
@@ -1425,9 +1727,15 @@ int p2_p3_handler(){
   	printf("\n*****\nRound one is complete ...\n******\n");
 
   	//Round 2===============================================================================
-
+      recv(addr_soc[2],buffer,1,0);
+      time_beg = clock();
     recv_input_commits_r2(2);
     send_input_commits_r2(2);
+      time_end = clock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      send_bytes += 4*4*SHA256_DIGEST_LENGTH;
+      recv_bytes+= 4*4*SHA256_DIGEST_LENGTH;
+
     //P2_P3_R1 completed
     round_mtx[2][3][1].unlock();
     //Waiting for other threds to complete round 0(1)
@@ -1457,7 +1765,7 @@ void garbler(){
     // time_beg = clock();
   recv(addr_soc[2],buffer,INPUT_4M,0);
     // time_end = clock();
-    // network_time += double(time_end-time_beg)/ CLOCKS_PER_SEC;
+    // network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
     // recv_bytes += INPUT_4M/2+3;
 
   cout<<"Got "<<buffer[1]<<" from Evaluator 1\n";
@@ -1641,6 +1949,7 @@ void evaluator2(){
 }
 
 int main(int argc, char *argv[]){
+
     #ifdef DEBUG
       cout<<"configure the ip of each party appropriately,\ncurrent settings\n";
       for(int i=0;i<4;i++){
@@ -1687,6 +1996,11 @@ int main(int argc, char *argv[]){
   	}
   	else
       printf("\npass arguments evaluator/garbler  Eg: ./4pc_god e \n e - evaluator1\n f - evaluator2\n g - garbler1or2\n");
+
+    //Timing prints
+    printf("Computation time : %fms\nNetwork time : %fms\n",comp_time,network_time);
+    printf("Send %f bytes\tReceived : %f bytes\n",send_bytes,recv_bytes);
+    printf("Send %f KB\tReceived : %f KB\n",send_bytes/1024,recv_bytes/1024);
 
   	return 0;
 
