@@ -3,6 +3,15 @@ Secure Three-Party Computation with Fairness and Guaranteed Output Delivery.
 
 This repository contain implementations for MRZ15 and MRZ15 with Fairness and an efficient three party Garanteed output delivery protocol.
 
+## Packages needed
+For ubuntu 16.04
+```
+g++
+build-essential
+libssl-dev
+libmsgpack-dev
+```
+
 ## Testing instructions
 
 Always start the evaluator first. run garblers in different terminals.
