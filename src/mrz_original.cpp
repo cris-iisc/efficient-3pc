@@ -114,8 +114,6 @@ int garbler(char *ip){
       randomGen(b_array,INPUT_4M/8);
       seed = garble_seed(NULL);
 
-      memcpy(buffer,&seed,sizeof(block));
-      memcpy(buffer+sizeof(block),b_array,INPUT_4M/8);
 
         time_end = clock();
         comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
@@ -127,6 +125,8 @@ int garbler(char *ip){
         //dummy send (for exact timing calculations)
         send(g_id,buffer,1,0);
         time_beg = clock();
+      memcpy(buffer,&seed,sizeof(block));
+      memcpy(buffer+sizeof(block),b_array,INPUT_4M/8);
       send(g_id,buffer,INPUT_4M/8+sizeof(block),0);
         time_end = clock();
         network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
@@ -156,6 +156,8 @@ int garbler(char *ip){
       recv(g_server_fd,buffer,1,0);
       time_beg = clock();
     recv(g_server_fd,buffer,INPUT_4M/8+sizeof(block),0);
+    memcpy(&seed,buffer,sizeof(block));
+    memcpy(b_array,buffer+sizeof(block),INPUT_4M/8);
       time_end = clock();
       network_time = network_time + double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
       recv_bytes += sizeof(block)+INPUT_4M/8;
@@ -166,8 +168,6 @@ int garbler(char *ip){
 
     close(g_server_fd);
       time_beg = clock();//computation time
-    memcpy(&seed,buffer,sizeof(block));
-    memcpy(b_array,buffer+sizeof(block),INPUT_4M/8);
 
     seed = garble_seed(&seed);
   }
@@ -183,7 +183,6 @@ int garbler(char *ip){
   // Sampled b------------------------------------------------------------
 
   //Sending b values of Evaluator===============================================
-  memcpy(buffer, b+INPUT_4M/2,sizeof(bool)*INPUT_4M/2);
     time_end = clock();
     comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
@@ -194,6 +193,7 @@ int garbler(char *ip){
     //dummy recv (for timing calculations)
     send(server_fd,buffer,1,0);
     time_beg = clock();
+  memcpy(buffer, b+INPUT_4M/2,sizeof(bool)*INPUT_4M/2);
   send(server_fd,buffer,sizeof(bool)*INPUT_4M/2,0);
     time_end = clock();
     network_time =network_time + double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
@@ -453,7 +453,7 @@ int garbler(char *ip){
     send_bytes += sizeof(block) * 2 * gc.m;
 */
 
-  printf("Computation time : %fms\nNetwork time : %fms\n",comp_time,network_time);
+  printf("Computation time : %fms\nNetwork time : %fms\nTotal time : %fms\n",comp_time,network_time,comp_time+network_time);
   printf("Send %f bytes\tReceived : %f bytes\n",send_bytes,recv_bytes);
   printf("Send %f KB\tReceived : %f KB\n",send_bytes/1024,recv_bytes/1024);
 
@@ -756,13 +756,6 @@ int garble_handler(int id){
   #endif
   //Receiving Garblers labels for decommitment====================================
   recv(client_soc[id], buffer, sizeof(block) * gc.n,0);
-    time_end = clock();
-    comp_time_mtx.lock();
-      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
-      recv_bytes += INPUT_4M + sizeof(block) * gc.n;
-    comp_time_mtx.unlock();
-
-    time_beg = clock();
   if(id==0){
     memcpy(extractedLabels, buffer, sizeof(block) * gc.n/4);
     memcpy(extractedLabels+gc.n/2, buffer+(gc.n/2)*sizeof(block), sizeof(block) * gc.n/4);
@@ -772,8 +765,10 @@ int garble_handler(int id){
     memcpy(extractedLabels+(gc.n/2+gc.n/4), buffer+(gc.n/2+gc.n/4)*sizeof(block), sizeof(block) * gc.n/4);
   }
     time_end = clock();
-      comp_time_mtx.lock();
-      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+    comp_time_mtx.lock();
+      network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
+      recv_bytes += INPUT_4M + sizeof(block) * gc.n;
+    comp_time_mtx.unlock();
 
       #ifdef DEBUG
         cout<<"Total Comp Time : "<< comp_time<<" Current send/recv : "<< double(time_end-time_beg)<<"\n";
@@ -881,7 +876,7 @@ int garble_handler(int id){
         comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
         comp_time_mtx.unlock();*/
     printf("\nEvaluated output successfully\n");
-    printf("Computation time : %fms\nNetwork time : %fms\n",comp_time,network_time);
+    printf("Computation time : %fms\nNetwork time : %fms\nTotal time : %fms\n",comp_time,network_time,comp_time+network_time);
     printf("Send %f bytes\tReceived : %f bytes\n",send_bytes,recv_bytes);
     printf("Send %f KB\tReceived : %f KB\n",send_bytes/1024,recv_bytes/1024);
   }

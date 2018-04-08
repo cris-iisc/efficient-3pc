@@ -12,13 +12,13 @@ int addr_soc[4];  // socket address for other parties
 int id; //0-P0, 1-P1, 2-P2, 3-P3
 
 //varies from circuit to circuits
-#define INPUT_4M 512
+#define INPUT_4M 256
 int blocks_in_one_round = MAX_PAYLOAD_SIZE/sizeof(block);
 int sha256_in_one_round = blocks_in_one_round/2;
 
-#define GC_FILE "circuits/sha_256.txt"
-// #define GC_FILE "circuits/aes.txt"
-#define DEBUG
+// #define GC_FILE "circuits/sha_256.txt"
+#define GC_FILE "circuits/aes.txt"
+// #define DEBUG
 
 //time calculations
 #define CLOCKS_PER_M_SEC 1000
@@ -220,12 +220,12 @@ int p0_p1_handler(){
     time_end = clock();
     comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
-    //sharing randomness
-    memcpy(buffer,&seed,sizeof(block));
-    memcpy(buffer+sizeof(block),b_array,INPUT_4M/8);
       //dummy send (for exact timing calculations)
       send(addr_soc[1],buffer,1,0);
       time_beg = clock();
+    //sharing randomness
+    memcpy(buffer,&seed,sizeof(block));
+    memcpy(buffer+sizeof(block),b_array,INPUT_4M/8);
     send(addr_soc[1],buffer,INPUT_4M/8+sizeof(block),0);
       time_end = clock();
       network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
@@ -338,11 +338,11 @@ int p0_p1_handler(){
       recv(addr_soc[0],buffer,1,0);
       time_beg = clock();
     recv(addr_soc[0],buffer,INPUT_4M/8+sizeof(block),0);
+    memcpy(&seed,buffer,sizeof(block));
+    memcpy(b_array,buffer+sizeof(block),INPUT_4M/8);
       time_end = clock();
       network_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
       recv_bytes+= INPUT_4M/8+sizeof(block);
-    memcpy(&seed,buffer,sizeof(block));
-    memcpy(b_array,buffer+sizeof(block),INPUT_4M/8);
 
       time_beg = clock();//computation time
 
@@ -570,12 +570,15 @@ int p0_p2_handler(){
     round_mtx[0][3][1].unlock();
 
     //Round 3=======================================================================
+          time_beg = clock();//computation time
+    computedOutputMap = garble_allocate_blocks(gc.m);
+    outputVals = (bool*) calloc(gc.m, sizeof(bool));
+          time_end = clock();
+          comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
       recv(addr_soc[2],buffer,1,0);
       time_beg = clock();
     //receving Y from evaluator.===============================================
-    computedOutputMap = garble_allocate_blocks(gc.m);
-    outputVals = (bool*) calloc(gc.m, sizeof(bool));
     recv(addr_soc[2], buffer, sizeof(block) * gc.m, 0);
     memcpy(computedOutputMap,buffer,sizeof(block) * gc.m);
     printf("receved Y from evaluator\no/p : ");
@@ -654,6 +657,7 @@ int p0_p2_handler(){
   	  recv_bytes+= 4*4*SHA256_DIGEST_LENGTH;
 
     //receving commitments========================================================
+      time_beg = clock();//computation time
     char commit_msg[gc.n*2][SHA256_DIGEST_LENGTH];
     int no_of_rounds = (gc.n*2/sha256_in_one_round);
     int blocks_in_last_round = gc.n*2 %blocks_in_one_round;
@@ -662,6 +666,8 @@ int p0_p2_handler(){
     for (int i = INPUT_4M/2; i < INPUT_4M; ++i){
       decomm[i] = (inputs[i] + b[i]) % 2;
     }
+      time_end = clock();
+      comp_time += double(time_end-time_beg)/ CLOCKS_PER_M_SEC;
 
       recv(addr_soc[0],buffer,1,0);
       time_beg = clock();
@@ -1998,7 +2004,7 @@ int main(int argc, char *argv[]){
       printf("\npass arguments evaluator/garbler  Eg: ./4pc_god e \n e - evaluator1\n f - evaluator2\n g - garbler1or2\n");
 
     //Timing prints
-    printf("Computation time : %fms\nNetwork time : %fms\n",comp_time,network_time);
+    printf("Computation time : %fms\nNetwork time : %fms\nTotal time : %fms\n",comp_time,network_time,comp_time+network_time);
     printf("Send %f bytes\tReceived : %f bytes\n",send_bytes,recv_bytes);
     printf("Send %f KB\tReceived : %f KB\n",send_bytes/1024,recv_bytes/1024);
 

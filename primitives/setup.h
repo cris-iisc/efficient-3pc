@@ -7,7 +7,7 @@
 #include "socket.h"
 #include <set>
 
-#define INPUT_4M 512
+#define INPUT_4M 256
 //#define INPUT_PER_SHARE 256/12
 //#define INPUT_FIRST_SHARE 256/4 - 2 * INPUT_PER_SHARE
 
